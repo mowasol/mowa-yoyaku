@@ -69,7 +69,7 @@ function Intro({ cfg }) {
     <${motion.h1} initial=${{ opacity: 0, y: 16 }} animate=${{ opacity: 1, y: 0 }} transition=${{ duration: 0.45, ease }}>
       レッスンの日時を<span className="mark"><${motion.span} className="mark-bg" initial=${{ scaleX: 0 }} animate=${{ scaleX: 1 }} transition=${{ delay: 0.35, duration: 0.5, ease }} />えらんで予約</span>
     </${motion.h1}>
-    <${motion.p} ...${fadeUp} transition=${{ delay: 0.1 }}>コースは月1回と月2回の2つです。レッスンの内容は、お子さま一人ひとりに合わせて決めます。</${motion.p}>
+    <${motion.p} ...${fadeUp} transition=${{ delay: 0.1 }}>コースは${cfg.plans.map((p) => `${p.name}（ひと月${p.times}回まで）`).join("と")}の${cfg.plans.length}つです。レッスンの内容は、お子さま一人ひとりに合わせて決めます。</${motion.p}>
     <div className="hours">${hoursSummary(cfg).map((h, i) => html`<${motion.div} key=${h.label} className="hours-card" initial=${{ opacity: 0, y: 10 }} animate=${{ opacity: 1, y: 0 }} transition=${{ delay: 0.15 + i * 0.06, duration: 0.35, ease }}>
       <div className="hours-label">${h.label}<span>${h.slots.length}コマ</span></div>
       <ul className="hours-slots">${h.slots.map((s, j) => html`<li key=${s.start}><span className="mk">${slotMark(j, h.slots.length)}</span>${trim0(s.start)}〜${trim0(s.end)}</li>`)}</ul>
