@@ -7,7 +7,7 @@ import { WEEKDAYS, parseDate, addMonths, nowJST, formatDateJa, dayInfo, endTime,
 const addMin = (t, m) => toHHMM(Math.min(toMin(t) + m, 23 * 60 + 55));
 import { html, React, motion, AnimatePresence, ease, tap, fadeUp, monthLabel, ErrorBox, Button } from "./ui.js";
 
-const { useState, useEffect, useCallback } = React;
+const { useState, useEffect, useCallback, useRef } = React;
 const TABS = [["cal", "カレンダー"], ["list", "予約一覧"], ["days", "営業日"], ["settings", "設定"]];
 
 function App() {
@@ -22,8 +22,26 @@ function App() {
     Promise.all([call("GET", "/api/admin/me"), call("GET", "/api/admin/settings")])
       .then(([m, s]) => { setMe(m); setSettings(s.settings); }).catch((e) => setErr(e.message));
   }, []);
-  const load = useCallback(() => call("GET", `/api/admin/lessons?month=${month}`).then(setData).catch((e) => setErr(e.message)), [month]);
-  useEffect(() => { if (settings) load(); }, [month, settings]);
+  // 月ごとのデータは覚えておき、前後の月も先に読んでおく（月の切り替えをすぐ表示するため）
+  const cache = useRef({});
+  const monthRef = useRef(month);
+  monthRef.current = month;
+  const fetchMonth = useCallback((m) => call("GET", `/api/admin/lessons?month=${m}`).then((d) => {
+    cache.current[m] = d;
+    if (monthRef.current === m) setData(d);
+    return d;
+  }), []);
+  const load = useCallback(() => fetchMonth(month).catch((e) => setErr(e.message)), [month]);
+  useEffect(() => {
+    if (!settings) return;
+    if (cache.current[month]) setData(cache.current[month]); // 覚えている分をすぐ出し、裏で最新に入れかえる
+    fetchMonth(month).then(() => {
+      [addMonths(month, -1), addMonths(month, 1)].forEach((m) => { if (!cache.current[m]) fetchMonth(m).catch(() => {}); });
+    }).catch((e) => setErr(e.message));
+  }, [month, settings]);
+  // 画面を先に変えてから裏で保存する（待たずに次の操作ができる）
+  const patch = useCallback((fn) => setData((d) => { const nd = fn(d); cache.current[nd.month] = nd; return nd; }), []);
+  const shown = data && data.month === month ? data : null;
 
   const nav = html`<div className="month-nav">
     <${motion.button} className="icon-btn" type="button" aria-label="前の月" whileTap=${tap} onClick=${() => setMonth(addMonths(month, -1))}>‹</${motion.button}>
@@ -43,11 +61,11 @@ function App() {
     </div></header>
     <main className="wrap wide">
       <${ErrorBox} msg=${err} />
-      ${!settings || !data ? html`<p className="loading">読み込んでいます…</p>` : html`<${AnimatePresence} mode="wait">
+      ${!settings || !shown ? html`${settings && html`<div className="toolbar">${nav}</div>`}<p className="loading">読み込んでいます…</p>` : html`<${AnimatePresence} mode="wait">
         <${motion.div} key=${tab} ...${fadeUp}>
-          ${tab === "cal" ? html`<${CalTab} data=${data} settings=${settings} nav=${nav} reload=${load} setErr=${setErr} onToday=${() => setMonth(nowJST().month)} />`
-          : tab === "list" ? html`<${ListTab} data=${data} settings=${settings} nav=${nav} reload=${load} setErr=${setErr} month=${month} />`
-          : tab === "days" ? html`<${DaysTab} data=${data} settings=${settings} nav=${nav} reload=${load} setErr=${setErr} />`
+          ${tab === "cal" ? html`<${CalTab} data=${shown} settings=${settings} nav=${nav} reload=${load} patch=${patch} setErr=${setErr} onToday=${() => setMonth(nowJST().month)} />`
+          : tab === "list" ? html`<${ListTab} data=${shown} settings=${settings} nav=${nav} reload=${load} patch=${patch} setErr=${setErr} month=${month} />`
+          : tab === "days" ? html`<${DaysTab} data=${shown} settings=${settings} nav=${nav} reload=${load} patch=${patch} setErr=${setErr} />`
           : html`<${SettingsTab} settings=${settings} onSaved=${setSettings} />`}
         </${motion.div}>
       </${AnimatePresence}>`}
@@ -56,7 +74,7 @@ function App() {
 }
 
 // ---- 1日分の時間割 ----
-function DayCard({ d, data, settings, showC, reload, setErr }) {
+function DayCard({ d, data, settings, showC, reload, patch, setErr }) {
   const today = nowJST().date;
   const ls = data.lessons.filter((l) => l.date === d.date && (showC || l.status === "active"));
   const nActive = data.lessons.filter((l) => l.date === d.date && l.status === "active").length;
@@ -71,18 +89,21 @@ function DayCard({ d, data, settings, showC, reload, setErr }) {
       return html`<div className="aslot" key=${t}>
         <div className="time">${t}〜${endTime(t, settings, d.date)}<span className=${`cap ${n >= cap ? "full" : ""}`}>${n} / ${cap}人${n >= cap ? " 満席" : ""}</span>
           <div className="meter">${Array.from({ length: cap }, (_, i) => html`<${motion.i} key=${i} className=${i < n ? "on" : ""} initial=${{ scaleX: 0 }} animate=${{ scaleX: 1 }} transition=${{ delay: i * 0.04 }} />`)}</div></div>
-        <div className="people">${p.length ? p.map((l) => html`<${Person} key=${l.id} l=${l} reload=${reload} setErr=${setErr} />`) : html`<span className="empty-slot">予約なし</span>`}</div>
+        <div className="people">${p.length ? p.map((l) => html`<${Person} key=${l.id + l.status} l=${l} reload=${reload} patch=${patch} setErr=${setErr} />`) : html`<span className="empty-slot">予約なし</span>`}</div>
       </div>`;
     }) : html`<div className="aslot"><span className="empty-slot">レッスンはありません</span></div>`}
   </article>`;
 }
 
-function Person({ l, reload, setErr }) {
+function Person({ l, reload, patch, setErr }) {
   const [sure, setSure] = useState(false);
   useEffect(() => { if (!sure) return; const t = setTimeout(() => setSure(false), 4000); return () => clearTimeout(t); }, [sure]);
   const cancel = async () => {
     if (!sure) return setSure(true);
-    try { await call("POST", `/api/admin/lessons/${l.id}/cancel`); reload(); } catch (e) { setErr(e.message); }
+    // すぐ「キャンセル済み」にして、裏で保存する
+    patch((d) => ({ ...d, lessons: d.lessons.map((x) => (x.id === l.id && x.reservationId === l.reservationId ? { ...x, status: "cancelled" } : x)) }));
+    try { await call("POST", `/api/admin/lessons/${l.id}/cancel`); } catch (e) { setErr(e.message); }
+    reload();
   };
   return html`<div className=${`person ${l.status === "cancelled" ? "cancelled" : ""}`}>
     <span className="nm">${l.childName}</span><span className="gr">${l.grade}</span><span className="pl">${l.plan}</span>
@@ -93,7 +114,7 @@ function Person({ l, reload, setErr }) {
 }
 
 // ---- カレンダー ----
-function CalTab({ data, settings, nav, reload, setErr, onToday }) {
+function CalTab({ data, settings, nav, reload, patch, setErr, onToday }) {
   const today = nowJST().date;
   const [sel, setSel] = useState(today.startsWith(data.month) ? today : null);
   useEffect(() => { setSel(today.startsWith(data.month) ? today : null); }, [data.month]);
@@ -120,12 +141,12 @@ function CalTab({ data, settings, nav, reload, setErr, onToday }) {
       })}
     </div>
     <div id="calDetail"><${AnimatePresence} mode="wait">${selDay && html`<${motion.div} key=${sel} ...${fadeUp}>
-      <${DayCard} d=${selDay} data=${data} settings=${settings} showC=${true} reload=${reload} setErr=${setErr} /></${motion.div}>`}</${AnimatePresence}></div>
+      <${DayCard} d=${selDay} data=${data} settings=${settings} showC=${true} reload=${reload} patch=${patch} setErr=${setErr} /></${motion.div}>`}</${AnimatePresence}></div>
   </section>`;
 }
 
 // ---- 予約一覧 ----
-function ListTab({ data, settings, nav, reload, setErr, month }) {
+function ListTab({ data, settings, nav, reload, patch, setErr, month }) {
   const [showC, setShowC] = useState(false);
   const active = data.lessons.filter((l) => l.status === "active");
   const total = data.days.reduce((a, d) => a + d.slots.length, 0) * data.capacity;
@@ -144,12 +165,12 @@ function ListTab({ data, settings, nav, reload, setErr, month }) {
       <${Button} kind="ghost small" onClick=${csv}>CSVで書き出す</${Button}></div></div>
     <div className="stats">${stats.map(([k, v, u], i) => html`<${motion.div} key=${k} className="stat" initial=${{ opacity: 0, y: 8 }} animate=${{ opacity: 1, y: 0, transition: { delay: i * 0.05 } }}>
       <div className="k">${k}</div><div className="v">${v}<small>${u}</small></div></${motion.div}>`)}</div>
-    ${days.length ? days.map((d) => html`<${DayCard} key=${d.date} d=${d} data=${data} settings=${settings} showC=${showC} reload=${reload} setErr=${setErr} />`) : html`<p className="loading">この月の営業日はありません。</p>`}
+    ${days.length ? days.map((d) => html`<${DayCard} key=${d.date} d=${d} data=${data} settings=${settings} showC=${showC} reload=${reload} patch=${patch} setErr=${setErr} />`) : html`<p className="loading">この月の営業日はありません。</p>`}
   </section>`;
 }
 
 // ---- 営業日 ----
-function DaysTab({ data, settings, nav, reload, setErr }) {
+function DaysTab({ data, settings, nav, reload, patch, setErr }) {
   const [edit, setEdit] = useState(null);
   const [note, setNote] = useState("");
   const [dcap, setDcap] = useState("");
@@ -159,8 +180,23 @@ function DaysTab({ data, settings, nav, reload, setErr }) {
   const base = edit && dayInfo(edit, settings, {});
   const n = edit ? data.lessons.filter((l) => l.date === edit && l.status === "active").length : 0;
   const pick = (date) => { setEdit(date); setNote(data.overrides[date]?.note || ""); setDcap(data.overrides[date]?.capacity || ""); };
-  const save = async (open) => { try { await call("PUT", `/api/admin/overrides/${edit}`, { open, note, capacity: dcap === "" ? "" : Number(dcap) }); reload(); } catch (e) { setErr(e.message); } };
-  const reset = async () => { try { await call("DELETE", `/api/admin/overrides/${edit}`); reload(); } catch (e) { setErr(e.message); } };
+  // 営業日の変更は、カレンダーをすぐ書きかえてから裏で保存する
+  const applyLocal = (date, ov) => patch((d) => {
+    const overrides = { ...d.overrides };
+    if (ov) overrides[date] = ov; else delete overrides[date];
+    return { ...d, overrides, days: d.days.map((x) => (x.date === date ? dayInfo(date, settings, overrides) : x)) };
+  });
+  const save = async (open) => {
+    const capacity = dcap === "" ? "" : Number(dcap);
+    applyLocal(edit, { open, note, capacity });
+    try { await call("PUT", `/api/admin/overrides/${edit}`, { open, note, capacity }); } catch (e) { setErr(e.message); }
+    reload();
+  };
+  const reset = async () => {
+    applyLocal(edit, null);
+    try { await call("DELETE", `/api/admin/overrides/${edit}`); } catch (e) { setErr(e.message); }
+    reload();
+  };
   return html`<section>
     <div className="toolbar">${nav}</div>
     <p className="lead">日付を押すと、その日だけ「お休み」にしたり「営業」にしたりできます。第5週の自動休みを別の日に振り替えるときも、ここで切り替えてください。</p>
