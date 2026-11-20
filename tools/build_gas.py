@@ -33,6 +33,21 @@ def main() -> None:
     OUT.write_text(body, encoding="utf-8")
     print(f"wrote {OUT.relative_to(ROOT)} ({len(body.splitlines())} lines)")
 
+    # 貼り付け1回で済む1ファイル版（Shared + Code + 管理画面HTML）
+    admin_html = (ROOT / "gas/Admin.html").read_text(encoding="utf-8")
+    if "`" in admin_html or "${" in admin_html:
+        raise SystemExit("Admin.html にバッククォートや ${ があると1ファイル版にできません")
+    code = (ROOT / "gas/Code.gs").read_text(encoding="utf-8")
+    bundle = (
+        "// mowaプログラミング教室 予約システム（1ファイル版・自動生成）\n"
+        "// このファイルの中身を Apps Script の「コード.gs」に丸ごと貼り付ける。\n\n"
+        + body + "\n\n// ===== Admin.html =====\nconst ADMIN_HTML = `" + admin_html + "`;\n\n// ===== Code.gs =====\n" + code
+    )
+    dist = ROOT / "gas/dist/Bundle.gs"
+    dist.parent.mkdir(exist_ok=True)
+    dist.write_text(bundle.replace("\r\n", "\n"), encoding="utf-8")
+    print(f"wrote {dist.relative_to(ROOT)} ({len(bundle.splitlines())} lines)")
+
 
 if __name__ == "__main__":
     main()

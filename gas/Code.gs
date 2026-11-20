@@ -55,7 +55,11 @@ function setup() {
   if (!st.getRange("A2").getValue()) st.getRange("A2:B2").setValues([["settings", JSON.stringify(mergeSettings(null))]]);
   ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === "dailyJob").forEach((t) => ScriptApp.deleteTrigger(t));
   ScriptApp.newTrigger("dailyJob").timeBased().atHour(9).everyDays(1).inTimezone("Asia/Tokyo").create();
-  SpreadsheetApp.getUi().alert("初期設定が終わりました。次に「デプロイ」から公開してください。");
+  // 最初の空シート（シート1）が残っていたら消す
+  const blank = ss.getSheets().find((s) => !Object.values(SHEETS).some((d) => d.name === s.getName()) && s.getLastRow() === 0);
+  if (blank && ss.getSheets().length > 1) ss.deleteSheet(blank);
+  try { SpreadsheetApp.getUi().alert("初期設定が終わりました。次に「デプロイ」から公開してください。"); }
+  catch (e) { console.log("初期設定が終わりました"); } // エディタから実行したときは画面に出せない
 }
 
 // ---------- シートの読み書き ----------
@@ -232,7 +236,8 @@ function errorOut(err) {
 
 // ---------- 管理画面（管理者用URL） ----------
 function doGet() {
-  const t = HtmlService.createTemplateFromFile("Admin");
+  // 1ファイル版（Bundle.gs）では ADMIN_HTML に管理画面のHTMLが入っている
+  const t = typeof ADMIN_HTML !== "undefined" ? HtmlService.createTemplate(ADMIN_HTML) : HtmlService.createTemplateFromFile("Admin");
   t.siteUrl = siteUrl();
   return t.evaluate().setTitle("予約管理 | mowaプログラミング教室").addMetaTag("viewport", "width=device-width, initial-scale=1");
 }
