@@ -21,7 +21,8 @@
       <span class="brand-name">予約管理<small id="who">mowaプログラミング教室</small></span>
     </a>
     <nav class="tabs" role="tablist">
-      <button type="button" role="tab" data-tab="list" aria-selected="true">予約一覧</button>
+      <button type="button" role="tab" data-tab="cal" aria-selected="true">カレンダー</button>
+      <button type="button" role="tab" data-tab="list" aria-selected="false">予約一覧</button>
       <button type="button" role="tab" data-tab="days" aria-selected="false">営業日</button>
       <button type="button" role="tab" data-tab="settings" aria-selected="false">設定</button>
       <a class="tab-link" href="/" target="_blank" rel="noopener">予約ページ ↗</a>
@@ -32,8 +33,18 @@
 <main class="wrap wide">
   <div class="err" id="fatal" hidden></div>
 
+  <!-- カレンダー -->
+  <section id="tab-cal">
+    <div class="toolbar">
+      <div class="month-nav"><button class="icon-btn" type="button" data-m="-1" aria-label="前の月">‹</button><h2 class="m-label"></h2><button class="icon-btn" type="button" data-m="1" aria-label="次の月">›</button></div>
+      <div class="tool-right"><button class="btn ghost small" type="button" id="toToday">今月</button></div>
+    </div>
+    <div class="bcal" id="bcal"><p class="loading">読み込んでいます…</p></div>
+    <div id="calDetail"></div>
+  </section>
+
   <!-- 予約一覧 -->
-  <section id="tab-list">
+  <section id="tab-list" hidden>
     <div class="toolbar">
       <div class="month-nav"><button class="icon-btn" type="button" data-m="-1" aria-label="前の月">‹</button><h2 class="m-label"></h2><button class="icon-btn" type="button" data-m="1" aria-label="次の月">›</button></div>
       <div class="tool-right">
@@ -86,6 +97,10 @@
       <div class="row3" id="planFields"></div>
       <div class="field"><label for="schoolNameIn">教室名</label><input id="schoolNameIn" maxlength="40"></div>
       <div class="field"><label for="noticeIn">お知らせ（予約ページの上に表示。空なら非表示）</label><textarea id="noticeIn" maxlength="300" placeholder="例：12月29日〜1月3日は冬休みです"></textarea></div>
+      <h2>管理者</h2>
+      <p class="lead">この管理画面を開けるGoogleアカウントです。ここに無い人は、ログインしても予約や名前を見られません。スタッフが辞めたら、ここから外してください。</p>
+      <ul class="admins" id="adminList"></ul>
+      <div class="add-row field"><input id="adminNew" type="email" maxlength="120" placeholder="例：staff@mowasol.com" aria-label="追加するメールアドレス"><button class="btn ghost small" type="button" id="adminAdd">追加</button></div>
       <div class="err" id="setErr" hidden></div>
       <div class="actions"><span class="saved" id="saved" hidden>保存しました</span><button class="btn" type="submit">設定を保存</button></div>
     </form>

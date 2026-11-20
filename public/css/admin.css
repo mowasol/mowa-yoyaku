@@ -67,3 +67,38 @@
 .row3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
 .form h2 { font-size: 1.15rem; margin-top: 8px; }
 .saved { color: var(--green); font-weight: 700; }
+
+/* カレンダー（月表示） */
+.bcal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.bcal .dow { text-align: center; font-size: .78rem; font-weight: 700; color: var(--ink-soft); padding-bottom: 2px; }
+.bcal .dow.sun { color: var(--bow); } .bcal .dow.sat { color: var(--focus); }
+.bday {
+  min-height: 112px; min-width: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--card);
+  padding: 4px 5px 6px; display: flex; flex-direction: column; gap: 2px; text-align: left; cursor: pointer; font: inherit; color: inherit;
+}
+.bday:hover { border-color: var(--ink); }
+.bday[aria-pressed="true"] { border: var(--stroke); }
+.bday.blank { visibility: hidden; }
+.bday.closed { background: transparent; border-style: dashed; }
+.bday.today .bnum { background: var(--leaf); color: #1d231c; border-radius: 999px; padding: 0 7px; }
+.bhead { display: flex; justify-content: space-between; align-items: center; gap: 4px; }
+.bnum { font-family: var(--font-head); font-weight: 700; font-variant-numeric: tabular-nums; font-size: .95rem; }
+.bcount { font-size: .7rem; font-weight: 700; color: var(--green); white-space: nowrap; }
+.bcount.full { color: var(--bow); }
+.boff { font-size: .72rem; color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip { font-size: .72rem; line-height: 1.35; background: var(--leaf-wash); border-radius: 5px; padding: 1px 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.chip b { font-weight: 700; margin-right: 3px; }
+.more { font-size: .7rem; color: var(--ink-soft); font-weight: 700; }
+#calDetail { margin-top: 16px; }
+@media (max-width: 700px) {
+  .bday { min-height: 58px; align-items: center; padding: 4px 2px; }
+  .bhead { flex-direction: column; gap: 0; }
+  .chip, .more, .boff { display: none; }
+}
+
+/* 管理者 */
+.admins { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
+.admins li { display: flex; justify-content: space-between; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 6px 12px; overflow-wrap: anywhere; }
+.admins li button { border: none; background: none; color: var(--bow); font-weight: 700; cursor: pointer; flex: none; }
+.add-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.add-row input { flex: 1 1 240px; min-width: 0; }

@@ -30,6 +30,7 @@ export const DEFAULT_SETTINGS = {
   bookingCloseHoursBefore: 24, // 何時間前まで予約できるか
   cancelHoursBefore: 24,       // 何時間前までキャンセル・変更できるか
   notice: "",                  // トップに出すお知らせ（空なら非表示）
+  admins: [],                  // 管理画面に入れるGoogleアカウント（公開した本人は常に入れる）
 };
 
 export const pad = (n) => String(n).padStart(2, "0");
@@ -137,6 +138,7 @@ export function validateSettings(s) {
   for (const p of s.plans) if (!p.id || !p.name || !(p.times >= 1 && p.times <= 8)) return "コースの設定が正しくありません";
   if (!(s.lessonMinutes >= 15 && s.lessonMinutes <= 240)) return "1コマの長さは15〜240分にしてください";
   if (!(s.capacity >= 1 && s.capacity <= 50)) return "定員は1〜50人にしてください";
+  if (!Array.isArray(s.admins) || s.admins.length > 30 || s.admins.some((a) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a))) return "管理者のメールアドレスを確認してください";
   for (let i = 0; i < 7; i++) {
     const r = s.weekly?.[i];
     if (!r) return `${WEEKDAYS[i]}曜日の設定がありません`;
