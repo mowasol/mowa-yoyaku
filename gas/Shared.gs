@@ -1,16 +1,169 @@
-// 予約APIの中身（ルール判定）。保存先(store)を差し替えて、
-// 本番は Cloudflare D1、お試しモードはブラウザ内で同じ動きをする。
-import {
-  DEFAULT_SETTINGS, GRADES, dayInfo, monthDates, isBookable, canCancel,
-  nowJST, addMonths, validateSettings, endTime, formatDateJa,
-} from "./schedule.js";
+// 自動生成ファイル。直接編集しない（docs/js/schedule.js と core.js を直して tools/build_gas.py を実行）
 
-export class ApiError extends Error {
+// ===== schedule.js =====
+// 予約枠の計算ロジック（画面とサーバー(Worker)の両方で共通利用）
+// 日付は "YYYY-MM-DD"、時刻は "HH:MM"、すべて日本時間で扱う。
+
+const WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"];
+
+const GRADES = ["年長", "小1", "小2", "小3", "小4", "小5", "小6", "中1", "中2", "中3", "高校生", "その他"];
+
+const DEFAULT_SETTINGS = {
+  schoolName: "mowaプログラミング教室",
+  // コース（内容はお子さまごとに個別。回数だけが違う）
+  plans: [
+    { id: "m1", name: "月1回コース", times: 1 },
+    { id: "m2", name: "月2回コース", times: 2 },
+  ],
+  lessonMinutes: 60,   // 1コマの長さ
+  capacity: 4,         // 1コマの定員
+  // 曜日ごとの営業時間（0=日 ... 6=土）。break は休憩時間（任意）
+  weekly: {
+    0: { open: true, start: "09:00", end: "17:30", breakStart: "12:00", breakEnd: "13:00" },
+    1: { open: true, start: "17:00", end: "19:00" },
+    2: { open: true, start: "17:00", end: "19:00" },
+    3: { open: true, start: "17:00", end: "19:00" },
+    4: { open: true, start: "17:00", end: "19:00" },
+    5: { open: true, start: "17:00", end: "19:00" },
+    6: { open: true, start: "09:00", end: "17:30", breakStart: "12:00", breakEnd: "13:00" },
+  },
+  // 同じ曜日は月4回まで。5回目（第5週）はお休み。0 にすると制限なし
+  maxPerWeekdayPerMonth: 4,
+  bookingOpenDaysAhead: 62,    // 何日先まで予約できるか
+  bookingCloseHoursBefore: 24, // 何時間前まで予約できるか
+  cancelHoursBefore: 24,       // 何時間前までキャンセル・変更できるか
+  notice: "",                  // トップに出すお知らせ（空なら非表示）
+  admins: [],                  // 管理画面に入れるGoogleアカウント（公開した本人は常に入れる）
+};
+
+const pad = (n) => String(n).padStart(2, "0");
+const toMin = (hhmm) => { const [h, m] = hhmm.split(":").map(Number); return h * 60 + m; };
+const toHHMM = (min) => `${pad(Math.floor(min / 60))}:${pad(min % 60)}`;
+
+function parseDate(dateStr) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return { y, m, d, dow: new Date(Date.UTC(y, m - 1, d)).getUTCDay() };
+}
+
+function daysInMonth(month) {
+  const [y, m] = month.split("-").map(Number);
+  return new Date(Date.UTC(y, m, 0)).getUTCDate();
+}
+
+function monthDates(month) {
+  const n = daysInMonth(month);
+  return Array.from({ length: n }, (_, i) => `${month}-${pad(i + 1)}`);
+}
+
+function addMonths(month, delta) {
+  const [y, m] = month.split("-").map(Number);
+  const t = new Date(Date.UTC(y, m - 1 + delta, 1));
+  return `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}`;
+}
+
+function addDays(dateStr, delta) {
+  const { y, m, d } = parseDate(dateStr);
+  const t = new Date(Date.UTC(y, m - 1, d + delta));
+  return `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())}`;
+}
+
+// 日本時間の「今」
+function nowJST(nowMs = Date.now()) {
+  const t = new Date(nowMs + 9 * 3600 * 1000);
+  const date = `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())}`;
+  return { date, month: date.slice(0, 7), minutes: t.getUTCHours() * 60 + t.getUTCMinutes(), ms: nowMs };
+}
+
+// 日本時間の日時 → UTCミリ秒
+function jstToMs(dateStr, hhmm) {
+  const { y, m, d } = parseDate(dateStr);
+  return Date.UTC(y, m - 1, d) + toMin(hhmm) * 60000 - 9 * 3600 * 1000;
+}
+
+// その日が「その月の第何回目のその曜日」か
+const nthWeekday = (dateStr) => Math.ceil(parseDate(dateStr).d / 7);
+
+// その日の営業状況。overrides: { "YYYY-MM-DD": { open: bool, note } }
+function dayInfo(dateStr, settings, overrides = {}) {
+  const { dow } = parseDate(dateStr);
+  const rule = settings.weekly[dow] || { open: false };
+  const ov = overrides[dateStr];
+  let open = !!rule.open;
+  let reason = open ? "" : "定休日";
+  const max = Number(settings.maxPerWeekdayPerMonth) || 0;
+  if (open && max > 0 && nthWeekday(dateStr) > max) { open = false; reason = `第${nthWeekday(dateStr)}${WEEKDAYS[dow]}曜はお休み`; }
+  if (ov) { open = !!ov.open; reason = ov.note || (open ? "" : "お休み"); }
+  return { date: dateStr, dow, open, reason, slots: open ? slotTimes(rule, settings) : [] };
+}
+
+// 営業時間からコマの開始時刻を作る
+function slotTimes(rule, settings) {
+  if (!rule || !rule.start || !rule.end) return [];
+  const len = Number(settings.lessonMinutes) || 60;
+  const s = toMin(rule.start), e = toMin(rule.end);
+  const bs = rule.breakStart ? toMin(rule.breakStart) : null;
+  const be = rule.breakEnd ? toMin(rule.breakEnd) : null;
+  const out = [];
+  let t = s;
+  while (t + len <= e) {
+    if (bs !== null && be !== null && t < be && t + len > bs) { t = be; continue; }
+    out.push(toHHMM(t));
+    t += len;
+  }
+  return out;
+}
+
+// 予約受付中か（締切・受付開始の判定）
+function isBookable(dateStr, hhmm, settings, nowMs = Date.now()) {
+  const start = jstToMs(dateStr, hhmm);
+  if (start - nowMs < (Number(settings.bookingCloseHoursBefore) || 0) * 3600000) return false;
+  const limit = addDays(nowJST(nowMs).date, Number(settings.bookingOpenDaysAhead) || 60);
+  return dateStr <= limit;
+}
+
+function canCancel(dateStr, hhmm, settings, nowMs = Date.now()) {
+  return jstToMs(dateStr, hhmm) - nowMs >= (Number(settings.cancelHoursBefore) || 0) * 3600000;
+}
+
+function endTime(hhmm, settings) {
+  return toHHMM(toMin(hhmm) + (Number(settings.lessonMinutes) || 60));
+}
+
+function formatDateJa(dateStr) {
+  const { m, d, dow } = parseDate(dateStr);
+  return `${m}月${d}日(${WEEKDAYS[dow]})`;
+}
+
+// 設定値の検証。問題があればエラーメッセージを返す
+function validateSettings(s) {
+  const hhmm = /^([01]\d|2[0-3]):[0-5]\d$/;
+  if (!Array.isArray(s.plans) || !s.plans.length) return "コースが設定されていません";
+  for (const p of s.plans) if (!p.id || !p.name || !(p.times >= 1 && p.times <= 8)) return "コースの設定が正しくありません";
+  if (!(s.lessonMinutes >= 15 && s.lessonMinutes <= 240)) return "1コマの長さは15〜240分にしてください";
+  if (!(s.capacity >= 1 && s.capacity <= 50)) return "定員は1〜50人にしてください";
+  if (!Array.isArray(s.admins) || s.admins.length > 30 || s.admins.some((a) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a))) return "管理者のメールアドレスを確認してください";
+  for (let i = 0; i < 7; i++) {
+    const r = s.weekly?.[i];
+    if (!r) return `${WEEKDAYS[i]}曜日の設定がありません`;
+    if (r.open) {
+      if (!hhmm.test(r.start) || !hhmm.test(r.end) || toMin(r.start) >= toMin(r.end)) return `${WEEKDAYS[i]}曜日の開始・終了時刻を確認してください`;
+      if ((r.breakStart || r.breakEnd) && !(hhmm.test(r.breakStart || "") && hhmm.test(r.breakEnd || "") && toMin(r.breakStart) < toMin(r.breakEnd))) return `${WEEKDAYS[i]}曜日の休憩時間を確認してください`;
+    }
+  }
+  return null;
+}
+
+// ===== core.js =====
+// 予約APIの中身（ルール判定）。保存先(store)を差し替えて、
+// 本番は Google Apps Script（スプレッドシート）、お試しモードはブラウザ内で同じ動きをする。
+// Apps Script 用には tools/build_gas.py で gas/Shared.gs に変換する。
+
+class ApiError extends Error {
   constructor(status, message, code) { super(message); this.status = status; this.code = code; }
 }
 const bad = (msg, code = "bad_request") => new ApiError(400, msg, code);
 
-export function mergeSettings(saved) {
+function mergeSettings(saved) {
   const s = { ...DEFAULT_SETTINGS, ...(saved || {}) };
   s.weekly = { ...DEFAULT_SETTINGS.weekly, ...(saved?.weekly || {}) };
   return s;
@@ -34,15 +187,15 @@ function randomToken() {
   return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 }
 
-export function createApi(store, opts = {}) {
+function createApi(store, opts = {}) {
   const now = () => (opts.now ? opts.now() : Date.now());
 
-  async function availability(month) {
+  function availability(month) {
     if (!MONTH_RE.test(month)) throw bad("月の指定が正しくありません");
-    const settings = await store.getSettings();
+    const settings = store.getSettings();
     const dates = monthDates(month);
-    const overrides = await store.getOverrides(dates[0], dates[dates.length - 1]);
-    const counts = await store.countActive(dates[0], dates[dates.length - 1]);
+    const overrides = store.getOverrides(dates[0], dates[dates.length - 1]);
+    const counts = store.countActive(dates[0], dates[dates.length - 1]);
     const t = now();
     const days = dates.map((date) => {
       const info = dayInfo(date, settings, overrides);
@@ -58,9 +211,9 @@ export function createApi(store, opts = {}) {
   }
 
   // 指定のコマが今予約できるか（定員以外）をサーバー側で再確認
-  async function assertSlotValid(settings, date, time) {
+  function assertSlotValid(settings, date, time) {
     if (!DATE_RE.test(date) || !TIME_RE.test(time)) throw bad("日時の指定が正しくありません");
-    const overrides = await store.getOverrides(date, date);
+    const overrides = store.getOverrides(date, date);
     const info = dayInfo(date, settings, overrides);
     if (!info.open || !info.slots.includes(time)) throw bad(`${formatDateJa(date)} ${time} は予約できない時間です`);
     if (!isBookable(date, time, settings, now())) throw bad(`${formatDateJa(date)} ${time} は受付期間外です`);
@@ -82,8 +235,8 @@ export function createApi(store, opts = {}) {
     };
   }
 
-  async function createReservation(body, ctx) {
-    const settings = await store.getSettings();
+  function createReservation(body, ctx) {
+    const settings = store.getSettings();
     const plan = settings.plans.find((p) => p.id === body.plan);
     if (!plan) throw bad("コースを選んでください");
     const lessons = Array.isArray(body.lessons) ? body.lessons : [];
@@ -94,12 +247,13 @@ export function createApi(store, opts = {}) {
       if (l.date?.slice(0, 7) !== month) throw bad("同じ月の中で日時を選んでください");
       if (seen.has(l.date)) throw bad("1日に1回までです。別の日を選んでください");
       seen.add(l.date);
-      await assertSlotValid(settings, l.date, l.time);
+      assertSlotValid(settings, l.date, l.time);
     }
     const email = str(body.email, 120, "メールアドレス");
     if (!EMAIL_RE.test(email)) throw bad("メールアドレスの形式を確認してください");
     if (!GRADES.includes(body.grade)) throw bad("学年を選んでください");
     if (!body.agree) throw bad("個人情報の取り扱いへの同意が必要です");
+    if (body.website) throw bad("送信できませんでした。ページを再読み込みしてお試しください"); // ボット用のわな欄
     const res = {
       id: randomToken().slice(0, 16), token: randomToken(), plan: plan.id, month,
       child_name: str(body.childName, 40, "お子さまのお名前"), grade: body.grade,
@@ -108,37 +262,37 @@ export function createApi(store, opts = {}) {
       created_at: new Date(now()).toISOString(),
     };
     const sorted = [...lessons].sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
-    await store.createReservation(res, sorted.map((l) => ({ date: l.date, time: l.time })), settings.capacity);
-    const saved = await store.getReservation(res.token);
+    store.createReservation(res, sorted.map((l) => ({ date: l.date, time: l.time })), settings.capacity);
+    const saved = store.getReservation(res.token);
     const out = publicReservation(saved.res, saved.lessons, settings);
-    await ctx?.notify?.("created", { token: res.token, reservation: out, settings });
+    ctx?.notify?.("created", { token: res.token, reservation: out, settings });
     return { token: res.token, reservation: out };
   }
 
-  async function getByToken(token) {
+  function getByToken(token) {
     if (!/^[0-9a-f]{48}$/.test(token || "")) throw new ApiError(404, "予約が見つかりません", "not_found");
-    const found = await store.getReservation(token);
+    const found = store.getReservation(token);
     if (!found) throw new ApiError(404, "予約が見つかりません", "not_found");
     return found;
   }
 
-  async function cancelLesson(token, body, ctx) {
-    const settings = await store.getSettings();
-    const { res, lessons } = await getByToken(token);
+  function cancelLesson(token, body, ctx) {
+    const settings = store.getSettings();
+    const { res, lessons } = getByToken(token);
     const l = lessons.find((x) => x.id === Number(body.lessonId));
     if (!l || l.status !== "active") throw bad("キャンセルできる予約がありません");
     if (!canCancel(l.date, l.time, settings, now())) throw bad(`開始${settings.cancelHoursBefore}時間前を過ぎたため、Webではキャンセルできません。教室へご連絡ください`);
-    await store.cancelLesson(l.id, res.id);
-    const saved = await store.getReservation(token);
+    store.cancelLesson(l.id, res.id);
+    const saved = store.getReservation(token);
     const out = publicReservation(saved.res, saved.lessons, settings);
-    await ctx?.notify?.("cancelled", { token, reservation: out, lesson: l, settings });
+    ctx?.notify?.("cancelled", { token, reservation: out, lesson: l, settings });
     return { reservation: out };
   }
 
   // 日時の変更（lessonId あり）または、キャンセル後の追加（lessonId なし）
-  async function changeLesson(token, body, ctx) {
-    const settings = await store.getSettings();
-    const { res, lessons } = await getByToken(token);
+  function changeLesson(token, body, ctx) {
+    const settings = store.getSettings();
+    const { res, lessons } = getByToken(token);
     const plan = settings.plans.find((p) => p.id === res.plan);
     const active = lessons.filter((l) => l.status === "active");
     let old = null;
@@ -151,21 +305,21 @@ export function createApi(store, opts = {}) {
     }
     if (body.date?.slice(0, 7) !== res.month) throw bad("同じ月の中で日時を選んでください");
     if (active.some((l) => l.date === body.date && l !== old)) throw bad("1日に1回までです。別の日を選んでください");
-    await assertSlotValid(settings, body.date, body.time);
-    await store.replaceLesson(old ? old.id : null, res.id, { date: body.date, time: body.time }, settings.capacity);
-    const saved = await store.getReservation(token);
+    assertSlotValid(settings, body.date, body.time);
+    store.replaceLesson(old ? old.id : null, res.id, { date: body.date, time: body.time }, settings.capacity);
+    const saved = store.getReservation(token);
     const out = publicReservation(saved.res, saved.lessons, settings);
-    await ctx?.notify?.("changed", { token, reservation: out, from: old, to: body, settings });
+    ctx?.notify?.("changed", { token, reservation: out, from: old, to: body, settings });
     return { reservation: out };
   }
 
   // ---- 管理者用 ----
-  async function adminLessons(month) {
+  function adminLessons(month) {
     if (!MONTH_RE.test(month)) throw bad("月の指定が正しくありません");
-    const settings = await store.getSettings();
+    const settings = store.getSettings();
     const dates = monthDates(month);
-    const rows = await store.listLessons(dates[0], dates[dates.length - 1]);
-    const overrides = await store.getOverrides(dates[0], dates[dates.length - 1]);
+    const rows = store.listLessons(dates[0], dates[dates.length - 1]);
+    const overrides = store.getOverrides(dates[0], dates[dates.length - 1]);
     const days = dates.map((d) => dayInfo(d, settings, overrides));
     return {
       month, capacity: settings.capacity, days,
@@ -179,21 +333,21 @@ export function createApi(store, opts = {}) {
     };
   }
 
-  async function adminCsv(month) {
-    const data = await adminLessons(month);
+  function adminCsv(month) {
+    const data = adminLessons(month);
     const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const head = ["日付", "開始", "終了", "状態", "コース", "お子さま", "学年", "保護者", "メール", "電話", "ご要望"];
     const lines = data.lessons.map((l) => [l.date, l.time, l.end, l.status === "active" ? "予約" : "キャンセル", l.plan, l.childName, l.grade, l.parentName, l.email, l.phone, l.note].map(esc).join(","));
     return "﻿" + [head.map(esc).join(","), ...lines].join("\r\n");
   }
 
-  async function handle(method, path, query = {}, body = {}, ctx = {}) {
+  function handle(method, path, query = {}, body = {}, ctx = {}) {
     const seg = path.replace(/^\/api\//, "").split("/").filter(Boolean);
     const isAdmin = seg[0] === "admin";
     if (isAdmin && !ctx.admin) throw new ApiError(403, "管理者としてログインしてください", "forbidden");
 
     if (method === "GET" && path === "/api/config") {
-      const s = await store.getSettings();
+      const s = store.getSettings();
       const { date } = nowJST(now());
       return {
         schoolName: s.schoolName, plans: s.plans, lessonMinutes: s.lessonMinutes, capacity: s.capacity,
@@ -207,8 +361,8 @@ export function createApi(store, opts = {}) {
     if (method === "POST" && path === "/api/reservations") return createReservation(body, ctx);
     if (seg[0] === "reservations" && seg[1]) {
       if (method === "GET" && seg.length === 2) {
-        const s = await store.getSettings();
-        const { res, lessons } = await getByToken(seg[1]);
+        const s = store.getSettings();
+        const { res, lessons } = getByToken(seg[1]);
         return { reservation: publicReservation(res, lessons, s) };
       }
       if (method === "POST" && seg[2] === "cancel") return cancelLesson(seg[1], body, ctx);
@@ -217,7 +371,7 @@ export function createApi(store, opts = {}) {
 
     if (isAdmin) {
       if (method === "GET" && seg[1] === "me") return { email: ctx.adminEmail || "" };
-      if (method === "GET" && seg[1] === "settings") return { settings: await store.getSettings() };
+      if (method === "GET" && seg[1] === "settings") return { settings: store.getSettings() };
       if (method === "PUT" && seg[1] === "settings") {
         const s = mergeSettings(body.settings);
         s.lessonMinutes = Number(s.lessonMinutes); s.capacity = Number(s.capacity);
@@ -226,21 +380,21 @@ export function createApi(store, opts = {}) {
         s.cancelHoursBefore = Number(s.cancelHoursBefore);
         const err = validateSettings(s);
         if (err) throw bad(err);
-        await store.saveSettings(s);
+        store.saveSettings(s);
         return { settings: s };
       }
       if (method === "GET" && seg[1] === "lessons") return adminLessons(query.month || nowJST(now()).month);
-      if (method === "GET" && seg[1] === "export.csv") return { __csv: await adminCsv(query.month || nowJST(now()).month) };
+      if (method === "GET" && seg[1] === "export.csv") return { __csv: adminCsv(query.month || nowJST(now()).month) };
       if (method === "POST" && seg[1] === "lessons" && seg[3] === "cancel") {
-        await store.adminCancelLesson(Number(seg[2]));
+        store.adminCancelLesson(Number(seg[2]));
         return { ok: true };
       }
       if (seg[1] === "overrides" && DATE_RE.test(seg[2] || "")) {
         if (method === "PUT") {
-          await store.setOverride(seg[2], { open: !!body.open, note: str(body.note, 40, "メモ", false) });
+          store.setOverride(seg[2], { open: !!body.open, note: str(body.note, 40, "メモ", false) });
           return { ok: true };
         }
-        if (method === "DELETE") { await store.deleteOverride(seg[2]); return { ok: true }; }
+        if (method === "DELETE") { store.deleteOverride(seg[2]); return { ok: true }; }
       }
     }
     throw new ApiError(404, "見つかりません", "not_found");

@@ -1,45 +1,44 @@
-// 画面からAPIを呼ぶ窓口。サーバーが無いとき（ローカルで開いたとき）は
-// ブラウザ内の「お試しモード」に自動で切り替わる。
+// 画面からAPIを呼ぶ窓口。3つの動き方がある。
+//  gas   … 予約ページ（GitHub Pages）から Google Apps Script の公開URLへ送る
+//  admin … 管理画面（Apps Script の中で開く）から google.script.run で呼ぶ。Googleログイン必須
+//  demo  … どちらも無いとき。ブラウザの中だけで動く「お試しモード」
 import { createApi, ApiError, mergeSettings } from "./core.js";
 import { monthDates, dayInfo, nowJST, addMonths } from "./schedule.js";
+import { API_URL } from "./config.js";
 
-let mode = null; // "server" | "demo"
 let demoApi = null;
+export const mode = typeof google !== "undefined" && google.script?.run ? "admin" : API_URL ? "gas" : "demo";
+if (mode === "demo") demoApi = createApi(demoStore(), {});
 
-async function detect() {
-  if (mode) return mode;
-  try {
-    const r = await fetch("/api/config", { headers: { Accept: "application/json" } });
-    const ct = r.headers.get("Content-Type") || "";
-    mode = r.ok && ct.includes("json") ? "server" : "demo";
-  } catch { mode = "demo"; }
-  if (mode === "demo") demoApi = createApi(demoStore(), {});
-  return mode;
-}
-
-export async function isDemo() { return (await detect()) === "demo"; }
+export const isDemo = () => mode === "demo";
 
 export async function call(method, path, body) {
-  await detect();
+  const u = new URL(path, "https://x.invalid");
+  const req = { method, path: u.pathname, query: Object.fromEntries(u.searchParams), body: body || {} };
   if (mode === "demo") {
-    const u = new URL(path, location.origin);
     try {
-      const out = await demoApi.handle(method, u.pathname, Object.fromEntries(u.searchParams), body || {}, { admin: true, adminEmail: "demo@mowa" });
+      const out = await demoApi.handle(req.method, req.path, req.query, req.body, { admin: true, adminEmail: "demo@mowa" });
       return JSON.parse(JSON.stringify(out));
     } catch (e) {
       if (e instanceof ApiError) throw e;
       throw new ApiError(500, String(e.message || e));
     }
   }
-  const r = await fetch(path, {
-    method, headers: body ? { "Content-Type": "application/json" } : {},
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const ct = r.headers.get("Content-Type") || "";
-  if (ct.includes("text/csv")) return { __csv: await r.text() };
-  const data = ct.includes("json") ? await r.json() : {};
-  if (!r.ok) throw new ApiError(r.status, data.error || "通信に失敗しました。もう一度お試しください", data.code);
-  return data;
+  let text;
+  if (mode === "admin") {
+    text = await new Promise((resolve, reject) =>
+      google.script.run.withSuccessHandler(resolve).withFailureHandler((e) => reject(new ApiError(500, e?.message || "通信に失敗しました"))).api(JSON.stringify(req)));
+  } else {
+    // text/plain で送ると、ブラウザの事前確認(CORS preflight)なしで Apps Script に届く
+    let r;
+    try { r = await fetch(API_URL, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(req) }); }
+    catch { throw new ApiError(0, "通信できませんでした。電波の良いところでもう一度お試しください"); }
+    text = await r.text();
+  }
+  let data;
+  try { data = JSON.parse(text); } catch { throw new ApiError(500, "サーバーの応答を読み取れませんでした。時間をおいてお試しください"); }
+  if (data.error) throw new ApiError(data.status || 400, data.error, data.code);
+  return data.result;
 }
 
 // ---------- お試しモードの保存先（このブラウザの中だけ） ----------

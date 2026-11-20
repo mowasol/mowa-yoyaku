@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<base href="<?= siteUrl ?>/">
+<meta charset="utf-8">
+<link rel="icon" href="assets/mowa-neko.jpg">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700&family=Noto+Sans+JP:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/admin.css">
+<script type="importmap">
+{ "imports": {
+  "react": "https://esm.sh/react@18.3.1",
+  "react/": "https://esm.sh/react@18.3.1/",
+  "react-dom": "https://esm.sh/react-dom@18.3.1?external=react",
+  "react-dom/client": "https://esm.sh/react-dom@18.3.1/client?external=react",
+  "framer-motion": "https://esm.sh/framer-motion@11.11.17?external=react,react-dom",
+  "htm": "https://esm.sh/htm@3.1.1"
+} }
+</script>
+</head>
+<body class="admin">
+<div id="root"><p class="loading">読み込んでいます…</p></div>
+<script type="module" src="js/admin-app.js"></script>
+</body>
+</html>

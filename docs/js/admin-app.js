@@ -1,0 +1,247 @@
+// 管理画面（スタッフ向け）React + framer-motion
+// 本番は Apps Script の管理者用URLで開く（Googleログイン必須）。ローカルではお試しモード。
+import { createRoot } from "react-dom/client";
+import { MotionConfig } from "framer-motion";
+import { call, isDemo } from "./api.js";
+import { WEEKDAYS, parseDate, addMonths, nowJST, formatDateJa, dayInfo, slotTimes, endTime } from "./schedule.js";
+import { html, React, motion, AnimatePresence, ease, tap, fadeUp, monthLabel, ErrorBox, Button } from "./ui.js";
+
+const { useState, useEffect, useCallback } = React;
+const TABS = [["cal", "カレンダー"], ["list", "予約一覧"], ["days", "営業日"], ["settings", "設定"]];
+
+function App() {
+  const [tab, setTab] = useState("cal");
+  const [me, setMe] = useState(null);
+  const [settings, setSettings] = useState(null);
+  const [month, setMonth] = useState(nowJST().month);
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    Promise.all([call("GET", "/api/admin/me"), call("GET", "/api/admin/settings")])
+      .then(([m, s]) => { setMe(m); setSettings(s.settings); }).catch((e) => setErr(e.message));
+  }, []);
+  const load = useCallback(() => call("GET", `/api/admin/lessons?month=${month}`).then(setData).catch((e) => setErr(e.message)), [month]);
+  useEffect(() => { if (settings) load(); }, [month, settings]);
+
+  const nav = html`<div className="month-nav">
+    <${motion.button} className="icon-btn" type="button" aria-label="前の月" whileTap=${tap} onClick=${() => setMonth(addMonths(month, -1))}>‹</${motion.button}>
+    <h2>${monthLabel(month)}</h2>
+    <${motion.button} className="icon-btn" type="button" aria-label="次の月" whileTap=${tap} onClick=${() => setMonth(addMonths(month, 1))}>›</${motion.button}>
+  </div>`;
+
+  return html`<${MotionConfig} reducedMotion="user">
+    ${isDemo() && html`<div className="demo-bar">お試しモード：見本のデータです。変更はこのブラウザの中だけに保存されます</div>`}
+    <header className="site-head"><div className="wrap wide">
+      <span className="brand"><span className="brand-logo"><img src="assets/mowa-neko.jpg" alt="mowaねこ" width="50" height="35" /></span>
+        <span className="brand-name">予約管理<small>${me?.email || "mowaプログラミング教室"}</small></span></span>
+      <nav className="tabs" role="tablist">${TABS.map(([k, label]) => html`<button key=${k} type="button" role="tab" aria-selected=${tab === k} onClick=${() => setTab(k)}>
+        ${tab === k && html`<${motion.span} layoutId="tabPill" className="tab-pill" transition=${{ type: "spring", stiffness: 500, damping: 38 }} />`}<span className="tab-t">${label}</span></button>`)}
+        ${me?.sheetUrl && html`<a className="tab-link" href=${me.sheetUrl} target="_blank" rel="noopener">スプレッドシート ↗</a>`}
+      </nav>
+    </div></header>
+    <main className="wrap wide">
+      <${ErrorBox} msg=${err} />
+      ${!settings || !data ? html`<p className="loading">読み込んでいます…</p>` : html`<${AnimatePresence} mode="wait">
+        <${motion.div} key=${tab} ...${fadeUp}>
+          ${tab === "cal" ? html`<${CalTab} data=${data} settings=${settings} nav=${nav} reload=${load} setErr=${setErr} onToday=${() => setMonth(nowJST().month)} />`
+          : tab === "list" ? html`<${ListTab} data=${data} settings=${settings} nav=${nav} reload=${load} setErr=${setErr} month=${month} />`
+          : tab === "days" ? html`<${DaysTab} data=${data} settings=${settings} nav=${nav} reload=${load} setErr=${setErr} />`
+          : html`<${SettingsTab} settings=${settings} onSaved=${setSettings} />`}
+        </${motion.div}>
+      </${AnimatePresence}>`}
+    </main>
+  </${MotionConfig}>`;
+}
+
+// ---- 1日分の時間割 ----
+function DayCard({ d, data, settings, showC, reload, setErr }) {
+  const today = nowJST().date;
+  const ls = data.lessons.filter((l) => l.date === d.date && (showC || l.status === "active"));
+  const nActive = data.lessons.filter((l) => l.date === d.date && l.status === "active").length;
+  const times = [...new Set([...d.slots, ...ls.map((l) => l.time)])].sort();
+  return html`<article className=${`aday ${d.date === today ? "today" : ""}`}>
+    <div className="aday-head"><h3>${formatDateJa(d.date)}${d.date === today ? "（今日）" : ""}</h3>
+      <span className="meta">${d.open ? `${nActive}人 / ${d.slots.length}コマ` : `お休み（${d.reason}）`}</span></div>
+    ${times.length ? times.map((t) => {
+      const p = ls.filter((l) => l.time === t);
+      const n = p.filter((l) => l.status === "active").length;
+      return html`<div className="aslot" key=${t}>
+        <div className="time">${t}〜${endTime(t, settings)}<span className=${`cap ${n >= data.capacity ? "full" : ""}`}>${n} / ${data.capacity}人${n >= data.capacity ? " 満席" : ""}</span>
+          <div className="meter">${Array.from({ length: data.capacity }, (_, i) => html`<${motion.i} key=${i} className=${i < n ? "on" : ""} initial=${{ scaleX: 0 }} animate=${{ scaleX: 1 }} transition=${{ delay: i * 0.04 }} />`)}</div></div>
+        <div className="people">${p.length ? p.map((l) => html`<${Person} key=${l.id} l=${l} reload=${reload} setErr=${setErr} />`) : html`<span className="empty-slot">予約なし</span>`}</div>
+      </div>`;
+    }) : html`<div className="aslot"><span className="empty-slot">レッスンはありません</span></div>`}
+  </article>`;
+}
+
+function Person({ l, reload, setErr }) {
+  const [sure, setSure] = useState(false);
+  useEffect(() => { if (!sure) return; const t = setTimeout(() => setSure(false), 4000); return () => clearTimeout(t); }, [sure]);
+  const cancel = async () => {
+    if (!sure) return setSure(true);
+    try { await call("POST", `/api/admin/lessons/${l.id}/cancel`); reload(); } catch (e) { setErr(e.message); }
+  };
+  return html`<div className=${`person ${l.status === "cancelled" ? "cancelled" : ""}`}>
+    <span className="nm">${l.childName}</span><span className="gr">${l.grade}</span><span className="pl">${l.plan}</span>
+    <span className="ct">${l.parentName}・${l.email}${l.phone ? `・${l.phone}` : ""}</span>
+    ${l.status === "active" && html`<${motion.button} type="button" className=${`x ${sure ? "sure" : ""}`} onClick=${cancel} whileTap=${tap} layout>${sure ? "本当に取消" : "取消"}</${motion.button}>`}
+    ${l.note && html`<span className="nt">${l.note}</span>`}
+  </div>`;
+}
+
+// ---- カレンダー ----
+function CalTab({ data, settings, nav, reload, setErr, onToday }) {
+  const today = nowJST().date;
+  const [sel, setSel] = useState(today.startsWith(data.month) ? today : null);
+  useEffect(() => { setSel(today.startsWith(data.month) ? today : null); }, [data.month]);
+  const first = parseDate(data.days[0].date).dow;
+  const selDay = sel && data.days.find((d) => d.date === sel);
+  return html`<section>
+    <div className="toolbar">${nav}<div className="tool-right"><${Button} kind="ghost small" onClick=${onToday}>今月</${Button}></div></div>
+    <div className="bcal">
+      ${WEEKDAYS.map((w, i) => html`<div key=${w} className=${`dow ${i === 0 ? "sun" : i === 6 ? "sat" : ""}`}>${w}</div>`)}
+      ${Array.from({ length: first }, (_, i) => html`<div key=${"b" + i} className="bday blank"></div>`)}
+      ${data.days.map((d, idx) => {
+        const ls = data.lessons.filter((l) => l.date === d.date && l.status === "active");
+        const cap = d.slots.length * data.capacity;
+        const shown = ls.slice(0, 4);
+        return html`<${motion.button} key=${d.date} type="button" className=${`bday ${d.open ? "" : "closed"} ${d.date === today ? "today" : ""}`}
+          aria-pressed=${sel === d.date} onClick=${() => setSel(d.date)} whileHover=${{ y: -2 }} whileTap=${tap}
+          initial=${{ opacity: 0, y: 6 }} animate=${{ opacity: 1, y: 0, transition: { delay: idx * 0.008, duration: 0.25 } }}>
+          <span className="bhead"><span className="bnum">${parseDate(d.date).d}</span>
+            ${d.open ? html`<span className=${`bcount ${cap && ls.length >= cap ? "full" : ""}`}>${ls.length}人</span>` : html`<span className="bcount full">休</span>`}</span>
+          ${!d.open && html`<span className="boff">${d.reason}</span>`}
+          ${shown.map((l) => html`<span key=${l.id} className="chip"><b>${l.time}</b>${l.childName}</span>`)}
+          ${ls.length > shown.length && html`<span className="more">ほか${ls.length - shown.length}人</span>`}
+        </${motion.button}>`;
+      })}
+    </div>
+    <div id="calDetail"><${AnimatePresence} mode="wait">${selDay && html`<${motion.div} key=${sel} ...${fadeUp}>
+      <${DayCard} d=${selDay} data=${data} settings=${settings} showC=${true} reload=${reload} setErr=${setErr} /></${motion.div}>`}</${AnimatePresence}></div>
+  </section>`;
+}
+
+// ---- 予約一覧 ----
+function ListTab({ data, settings, nav, reload, setErr, month }) {
+  const [showC, setShowC] = useState(false);
+  const active = data.lessons.filter((l) => l.status === "active");
+  const total = data.days.reduce((a, d) => a + d.slots.length, 0) * data.capacity;
+  const stats = [["予約コマ数", active.length, "件"], ["予約した家庭", new Set(active.map((l) => l.reservationId)).size, "件"],
+    ["埋まり具合", total ? Math.round((active.length / total) * 100) : 0, "%"], ["キャンセル", data.lessons.length - active.length, "件"]];
+  const csv = async () => {
+    const out = await call("GET", `/api/admin/export.csv?month=${month}`);
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([out.__csv], { type: "text/csv" }));
+    a.download = `mowa-yoyaku-${month}.csv`; a.click();
+  };
+  const days = data.days.filter((d) => d.open || data.lessons.some((l) => l.date === d.date));
+  return html`<section>
+    <div className="toolbar">${nav}<div className="tool-right">
+      <label className="mini-check"><input type="checkbox" checked=${showC} onChange=${(e) => setShowC(e.target.checked)} /> キャンセルも表示</label>
+      <${Button} kind="ghost small" onClick=${csv}>CSVで書き出す</${Button}></div></div>
+    <div className="stats">${stats.map(([k, v, u], i) => html`<${motion.div} key=${k} className="stat" initial=${{ opacity: 0, y: 8 }} animate=${{ opacity: 1, y: 0, transition: { delay: i * 0.05 } }}>
+      <div className="k">${k}</div><div className="v">${v}<small>${u}</small></div></${motion.div}>`)}</div>
+    ${days.length ? days.map((d) => html`<${DayCard} key=${d.date} d=${d} data=${data} settings=${settings} showC=${showC} reload=${reload} setErr=${setErr} />`) : html`<p className="loading">この月の営業日はありません。</p>`}
+  </section>`;
+}
+
+// ---- 営業日 ----
+function DaysTab({ data, settings, nav, reload, setErr }) {
+  const [edit, setEdit] = useState(null);
+  const [note, setNote] = useState("");
+  const first = parseDate(data.days[0].date).dow;
+  const d = edit && data.days.find((x) => x.date === edit);
+  const ov = edit && data.overrides[edit];
+  const base = edit && dayInfo(edit, settings, {});
+  const n = edit ? data.lessons.filter((l) => l.date === edit && l.status === "active").length : 0;
+  const pick = (date) => { setEdit(date); setNote(data.overrides[date]?.note || ""); };
+  const save = async (open) => { try { await call("PUT", `/api/admin/overrides/${edit}`, { open, note }); reload(); } catch (e) { setErr(e.message); } };
+  const reset = async () => { try { await call("DELETE", `/api/admin/overrides/${edit}`); reload(); } catch (e) { setErr(e.message); } };
+  return html`<section>
+    <div className="toolbar">${nav}</div>
+    <p className="lead">日付を押すと、その日だけ「お休み」にしたり「営業」にしたりできます。第5週の自動休みを別の日に振り替えるときも、ここで切り替えてください。</p>
+    <div className="cal admin-cal">
+      ${WEEKDAYS.map((w, i) => html`<div key=${w} className=${`dow ${i === 0 ? "sun" : i === 6 ? "sat" : ""}`}>${w}</div>`)}
+      ${Array.from({ length: first }, (_, i) => html`<div key=${"b" + i} className="day blank"></div>`)}
+      ${data.days.map((x) => {
+        const cnt = data.lessons.filter((l) => l.date === x.date && l.status === "active").length;
+        return html`<${motion.button} key=${x.date} type="button" className=${`day ${x.open ? "ok" : "off"} ${data.overrides[x.date] ? "star" : ""}`} aria-pressed=${edit === x.date} onClick=${() => pick(x.date)} whileTap=${tap}>
+          <span className="num">${parseDate(x.date).d}</span><span className="mk">${x.open ? (cnt ? `予約${cnt}` : "営業") : "休"}</span></${motion.button}>`;
+      })}
+    </div>
+    <div className="legend"><span><b className="ok">営業</b> 通常どおり</span><span><b className="full">休</b> お休み</span><span>★ 個別に変更した日</span></div>
+    <${AnimatePresence}>${d && html`<${motion.div} key=${edit} className="panel day-edit" ...${fadeUp}>
+      <h3>${formatDateJa(edit)}</h3>
+      <p className="lead">いまの状態：${d.open ? "営業" : "お休み"}${ov ? "（個別に変更済み）" : ""}。通常は「${base.open ? "営業" : base.reason}」の日です。</p>
+      <div className="field"><label htmlFor="deNote">お知らせメモ（予約ページに表示）</label><input id="deNote" maxLength="40" placeholder="例：臨時休業／振替営業" value=${note} onChange=${(e) => setNote(e.target.value)} /></div>
+      <div className="actions">${ov ? html`<${Button} kind="ghost small" onClick=${reset}>通常に戻す</${Button}>` : html`<span></span>`}
+        <span className="btn-row"><${Button} kind="danger small" onClick=${() => save(false)}>お休みにする</${Button}><${Button} kind="small" onClick=${() => save(true)}>営業にする</${Button}></span></div>
+      ${n > 0 && d.open && html`<p className="lead">※ この日はすでに${n}件の予約があります。お休みにしても予約は自動で取り消されません。予約一覧から取消し、ご家庭へ連絡してください。</p>`}
+    </${motion.div}>`}</${AnimatePresence}>
+  </section>`;
+}
+
+// ---- 設定 ----
+function SettingsTab({ settings, onSaved }) {
+  const [s, setS] = useState(() => structuredClone(settings));
+  const [adminNew, setAdminNew] = useState("");
+  const [err, setErr] = useState("");
+  const [saved, setSaved] = useState(false);
+  const up = (patch) => { setS({ ...s, ...patch }); setSaved(false); };
+  const upDay = (i, patch) => up({ weekly: { ...s.weekly, [i]: { ...s.weekly[i], ...patch } } });
+  const num = (k) => (e) => up({ [k]: Number(e.target.value) });
+  const save = async (e) => {
+    e.preventDefault(); setErr("");
+    const out = structuredClone(s);
+    for (const i of Object.keys(out.weekly)) { const r = out.weekly[i]; if (!r.breakStart && !r.breakEnd) { delete r.breakStart; delete r.breakEnd; } }
+    try { const r = await call("PUT", "/api/admin/settings", { settings: out }); onSaved(r.settings); setSaved(true); } catch (e2) { setErr(e2.message); }
+  };
+  const addAdmin = () => {
+    const v = adminNew.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return setErr("メールアドレスの形式を確認してください");
+    setErr(""); if (!s.admins.includes(v)) up({ admins: [...s.admins, v] }); setAdminNew("");
+  };
+  return html`<form className="panel form" noValidate onSubmit=${save}>
+    <h2>営業時間</h2>
+    <p className="lead">レッスンのコマは、開始時刻から「1コマの長さ」ごとに自動で作られます。休憩時間にかかるコマは作られません。</p>
+    <div className="tbl-wrap"><table className="week-tbl"><thead><tr><th>曜日</th><th>営業</th><th>開始</th><th>終了</th><th>休憩 開始</th><th>休憩 終了</th><th>できるコマ</th></tr></thead>
+      <tbody>${[1, 2, 3, 4, 5, 6, 0].map((i) => {
+        const r = s.weekly[i];
+        const t = r.open && r.start && r.end ? slotTimes(r, s) : [];
+        const tm = (k) => html`<input type="time" step="300" value=${r[k] || ""} onChange=${(e) => upDay(i, { [k]: e.target.value })} aria-label=${`${WEEKDAYS[i]}曜日 ${k}`} />`;
+        return html`<tr key=${i} className=${r.open ? "" : "closed"}><td className="dw">${WEEKDAYS[i]}</td>
+          <td><input type="checkbox" checked=${r.open} onChange=${(e) => upDay(i, { open: e.target.checked })} aria-label=${`${WEEKDAYS[i]}曜日 営業`} /></td>
+          <td>${tm("start")}</td><td>${tm("end")}</td><td>${tm("breakStart")}</td><td>${tm("breakEnd")}</td>
+          <td className="slotsN">${r.open ? (t.length ? `${t.length}コマ：${t.join(" ")}` : "コマなし") : "お休み"}</td></tr>`;
+      })}</tbody></table></div>
+    <div className="row3">
+      <div className="field"><label htmlFor="lm">1コマの長さ（分）</label><input id="lm" type="number" min="15" max="240" step="5" value=${s.lessonMinutes} onChange=${num("lessonMinutes")} /></div>
+      <div className="field"><label htmlFor="cp">1コマの定員（人）</label><input id="cp" type="number" min="1" max="50" value=${s.capacity} onChange=${num("capacity")} /></div>
+      <div className="field"><label htmlFor="mp">同じ曜日は月に何回まで</label><select id="mp" value=${s.maxPerWeekdayPerMonth ? 4 : 0} onChange=${num("maxPerWeekdayPerMonth")}><option value="4">4回（第5週はお休み）</option><option value="0">制限なし</option></select></div>
+    </div>
+    <h2>予約の受付</h2>
+    <div className="row3">
+      <div className="field"><label htmlFor="od">何日先まで予約できるか</label><input id="od" type="number" min="7" max="180" value=${s.bookingOpenDaysAhead} onChange=${num("bookingOpenDaysAhead")} /></div>
+      <div className="field"><label htmlFor="ch">何時間前で締め切るか</label><input id="ch" type="number" min="0" max="168" value=${s.bookingCloseHoursBefore} onChange=${num("bookingCloseHoursBefore")} /></div>
+      <div className="field"><label htmlFor="cc">変更・キャンセルの期限（時間前）</label><input id="cc" type="number" min="0" max="168" value=${s.cancelHoursBefore} onChange=${num("cancelHoursBefore")} /></div>
+    </div>
+    <h2>コースと表示</h2>
+    <div className="row3">${s.plans.map((p, i) => html`<div className="field" key=${p.id}><label htmlFor=${"pl" + i}>コース名（月${p.times}回）</label>
+      <input id=${"pl" + i} maxLength="20" value=${p.name} onChange=${(e) => up({ plans: s.plans.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })} /></div>`)}</div>
+    <div className="field"><label htmlFor="sn">教室名</label><input id="sn" maxLength="40" value=${s.schoolName} onChange=${(e) => up({ schoolName: e.target.value })} /></div>
+    <div className="field"><label htmlFor="nt">お知らせ（予約ページの上に表示。空なら非表示）</label><textarea id="nt" maxLength="300" placeholder="例：12月29日〜1月3日は冬休みです" value=${s.notice || ""} onChange=${(e) => up({ notice: e.target.value })}></textarea></div>
+    <h2>管理者</h2>
+    <p className="lead">この管理画面を開けるGoogleアカウントです。ここに無い人は、ログインしても予約や名前を見られません。スタッフが辞めたら、ここから外してください。</p>
+    <ul className="admins"><${AnimatePresence} initial=${false}>${s.admins.length ? s.admins.map((a) => html`<${motion.li} key=${a} layout initial=${{ opacity: 0, x: -8 }} animate=${{ opacity: 1, x: 0 }} exit=${{ opacity: 0, x: 8 }}>
+      <span>${a}</span><button type="button" onClick=${() => up({ admins: s.admins.filter((x) => x !== a) })}>外す</button></${motion.li}>`)
+      : html`<li key="none"><span>まだ登録がありません（公開した人だけが入れます）</span></li>`}</${AnimatePresence}></ul>
+    <div className="add-row field"><input type="email" maxLength="120" placeholder="例：staff@mowasol.com" aria-label="追加するメールアドレス" value=${adminNew} onChange=${(e) => setAdminNew(e.target.value)} onKeyDown=${(e) => { if (e.key === "Enter") { e.preventDefault(); addAdmin(); } }} />
+      <${Button} kind="ghost small" onClick=${addAdmin}>追加</${Button}></div>
+    <${ErrorBox} msg=${err} />
+    <div className="actions"><${AnimatePresence}>${saved ? html`<${motion.span} className="saved" initial=${{ opacity: 0, y: 4 }} animate=${{ opacity: 1, y: 0 }} exit=${{ opacity: 0 }}>保存しました</${motion.span}>` : html`<span></span>`}</${AnimatePresence}>
+      <${motion.button} type="submit" className="btn" whileTap=${tap}>設定を保存</${motion.button}></div>
+  </form>`;
+}
+
+createRoot(document.getElementById("root")).render(html`<${App} />`);

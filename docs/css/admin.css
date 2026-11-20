@@ -102,3 +102,8 @@
 .admins li button { border: none; background: none; color: var(--bow); font-weight: 700; cursor: pointer; flex: none; }
 .add-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .add-row input { flex: 1 1 240px; min-width: 0; }
+.tabs button { position: relative; min-height: 40px; }
+.tabs button[aria-selected="true"] { border-color: transparent; background: none; }
+.tab-pill { position: absolute; inset: 0; border-radius: 999px; border: var(--stroke); background: var(--leaf-wash); }
+.tab-t { position: relative; }
+.bday { min-height: 112px; }

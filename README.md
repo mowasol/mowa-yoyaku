@@ -1,84 +1,78 @@
 # mowaプログラミング教室 予約サイト
 
-保護者がログインなしでレッスンを予約できるサイト。Cloudflare Workers 1つで、画面・予約API・管理画面をまとめて動かす。
+保護者がログインなしでレッスンを予約できるサイト。Cloudflareは使わず、GitHub と Google（スプレッドシート・Gmail・カレンダー）だけで動く。
 
 ## しくみ
 
 ```
-保護者のスマホ ──https──▶ Cloudflare（独自ドメイン）
-                           ├ 画面（public/）…… 予約・確認・個人情報ページ
-                           ├ Worker（src/index.js）…… /api/* 予約の受付・定員チェック
-                           │    └ D1（データベース）…… 予約・設定・休業日
-                           ├ Turnstile …… いたずら予約・ボット対策
-                           └ Access …… /admin を許可したGoogleアカウントだけに
-GitHub（コード置き場）──push──▶ Cloudflare が自動で公開
-メール送信：Resend（予約確認・前日リマインド・管理者への通知）
+保護者のスマホ ──▶ 予約ページ（GitHub Pages：docs/）  React + framer-motion
+                      │  予約・変更・キャンセル
+                      ▼
+               Google Apps Script（公開URL）──▶ スプレッドシート（予約データ）
+                      │                        ├▶ Gmail（確認メール・前日のお知らせ）
+                      │                        └▶ Googleカレンダー（教室の予定に自動登録）
+スタッフ ──▶ 管理画面（Apps Script の管理者用URL・@mowasol.com のGoogleログイン必須）
 ```
+
+- 画面：`docs/`（ビルド不要。React・framer-motion・htm はブラウザが CDN から読む）
+- 予約ルール：`docs/js/schedule.js`・`docs/js/core.js`（画面のお試しモードと Apps Script で共通）
+- サーバー：`gas/`（Apps Script に貼るファイル。`Shared.gs` は自動生成）
+
+## 前の版に戻すには
+作り直す前の版（素のHTML・Cloudflare向け）は、タグ `v1-classic` とブランチ `classic` に残してある。
+```
+git checkout classic        # 前の版を見る
+git checkout main           # 今の版に戻る
+```
+
+## お試しモード
+`docs/js/config.js` の `API_URL` が空のときは、ブラウザの中だけで動く。
+```
+python -m http.server 8767 --directory docs
+```
+→ 予約画面 http://localhost:8767/ ／ 管理画面 http://localhost:8767/admin/
 
 ## 予約のルール（管理画面の「設定」で変更できる）
 - コース：月1回 / 月2回（内容はお子さまごとに個別）
-- 営業時間：平日 17:00〜19:00、土日 9:00〜17:30（休憩 12:00〜13:00）
-- 1コマ60分・定員4人
-- 同じ曜日は月4回まで。第5週にあたる日は自動でお休み（「営業日」タブで個別に振替できる）
-- 予約は24時間前まで、62日先まで。変更・キャンセルは24時間前まで、保護者がメールのリンクから行う
-- 同じ月の中で選ぶ。1日1回まで
-- 定員はデータベースのトリガーでも確認するため、同時に申し込まれても定員を超えない
+- 営業時間：平日 17:00〜19:00、土日 9:00〜17:30（休憩 12:00〜13:00）、1コマ60分・定員4人
+- 同じ曜日は月4回まで。第5週にあたる日は自動でお休み（「営業日」で個別に振替できる）
+- 予約は24時間前まで・62日先まで。変更・キャンセルは24時間前まで（保護者がメールのリンクから）
+- 同じ月の中で選ぶ。1日1回まで。定員チェックはサーバー側でロックをかけて行う
 
-## お試しモード
-サーバーが無い状態（ローカルで `public/` を開いたとき）は、ブラウザの中だけで動くお試しモードになる。
+## 公開手順（初回だけ）
+
+### 1. スプレッドシートと Apps Script（10分）
+1. 教室の管理用Googleアカウント（例：info@mowasol.com）で、新しいスプレッドシートを作る（名前：mowa予約）
+2. 拡張機能 → Apps Script を開き、`gas/` の4ファイルを同じ名前で作って中身を貼る
+   - `Code.gs`、`Shared.gs`、`Admin.html`、`appsscript.json`（プロジェクトの設定で「appsscript.json をエディタで表示」をオン）
+3. プロジェクトの設定 → スクリプト プロパティに追加
+   - `SITE_URL`：予約ページのURL（最初は `https://mowasol.github.io/mowa-yoyaku`、ドメイン設定後は `https://yoyaku.mowasol.com`）
+   - `CALENDAR_ID`：予定を入れるGoogleカレンダーのID（カレンダーの設定 → カレンダーの統合）
+   - `ADMIN_NOTIFY_EMAIL`：新規予約の通知先
+4. スプレッドシートを開き直し、メニュー「予約システム」→「初期設定」（権限の確認が出たら許可）
+
+### 2. 公開URLを2つ作る（デプロイ）
+1. デプロイ → 新しいデプロイ → 種類「ウェブアプリ」
+   - **予約受付用**：実行ユーザー「自分」、アクセス「全員」 → URL を `docs/js/config.js` の `API_URL` に貼る
+2. もう一度 新しいデプロイ
+   - **管理画面用**：実行ユーザー「自分」、アクセス「mowasol.com 内の全員」 → このURLをスタッフに共有（ブックマーク）
+3. 管理画面の「設定 → 管理者」に、スタッフのGoogleアカウントを追加する（公開した本人は最初から入れる）
+
+### 3. GitHub Pages
+1. GitHub のリポジトリ → Settings → Pages → Branch：`main`、フォルダ：`/docs` → Save
+2. 無料プランでは、リポジトリを Public にする必要がある（コードに個人情報や鍵は入っていない。予約データはスプレッドシート側）
+3. 独自ドメイン：Pages の Custom domain に `yoyaku.mowasol.com` を入れ、mowasol.com のDNSに CNAME（`yoyaku` → `mowasol.github.io`）を1行追加。「Enforce HTTPS」をオン
+
+### 4. 仕上げ
+- `privacy.html` の制定日と内容を確認
+- 自分で予約 → メール → カレンダー → 変更・キャンセル まで通しで確認
+
+## 予約ルールを直したとき
 ```
-python -m http.server 8765 --directory public
+python tools/build_gas.py     # docs/js の予約ルールを gas/Shared.gs に反映
 ```
-→ http://localhost:8765/ （予約画面）、http://localhost:8765/admin/ （管理画面）
-
-## 公開手順（初回だけ・30〜60分）
-
-### 1. GitHub
-1. GitHub に非公開リポジトリ `mowa-yoyaku` を作り、このフォルダをpushする
-
-### 2. Cloudflare（無料プランでOK）
-1. Cloudflare アカウントを作り、独自ドメインを追加する（ネームサーバーをCloudflareに変更）
-2. **D1**：Storage & Databases → D1 → 「mowa-yoyaku」を作成 → Console に `schema.sql` の中身を貼って実行
-3. 作ったD1の **Database ID** を `wrangler.jsonc` の `database_id` に書く
-4. **Workers**：Workers & Pages → Create → 「Import a repository」で GitHub の `mowa-yoyaku` をつなぐ（以後、pushするたびに自動で公開される）
-5. Worker の Settings → Domains & Routes で独自ドメイン（例：`yoyaku.mowasol.com`）を追加
-6. `wrangler.jsonc` の `SITE_URL` をそのドメインに変更
-
-### 3. 管理画面を守る（Cloudflare Access）
-1. Zero Trust → Access → Applications → Self-hosted を追加
-   - ドメイン：`yoyaku.xxx/admin*` と `yoyaku.xxx/api/admin*` の2つ
-   - ポリシー：許可するメールアドレス（教室スタッフのGoogleアカウント）
-   - ログイン方法：Google（またはメールで届くワンタイムコード）
-2. アプリの **AUD タグ** を `ACCESS_AUD` に、チーム名（`xxx.cloudflareaccess.com`）を `ACCESS_TEAM_DOMAIN` に書く
-3. 念のため `ADMIN_EMAILS` にも同じアドレスをカンマ区切りで書く（二重チェック）
-
-### 4. ボット対策（Turnstile）
-1. Turnstile → サイトを追加（ドメインを指定）
-2. サイトキーを `TURNSTILE_SITE_KEY` に、シークレットキーを Worker の Secrets `TURNSTILE_SECRET` に入れる
-
-### 5. メール（Resend）
-1. resend.com でアカウントを作り、送信用ドメインを認証（DNSに数行追加。Cloudflareなら自動）
-2. APIキーを Worker の Secrets `RESEND_API_KEY` に入れる
-3. `MAIL_FROM`（送信元）と `ADMIN_NOTIFY_EMAIL`（新規予約の通知先）を書く
-
-### 6. 仕上げ
-- Security → WAF → Rate limiting で `/api/reservations` に「1分に10回まで」などの制限をかける
-- `privacy.html` の制定日を書き、内容を確認する
-- 自分で一度予約 → メールが届く → 確認リンクで変更・キャンセルできることを確認
-
-## ファイル
-| ファイル | 内容 |
-|---|---|
-| `public/index.html` `js/book.js` | 予約画面（コース → 日時 → お子さま情報 → 確認） |
-| `public/reservation.html` `js/reservation.js` | 予約の確認・日時変更・キャンセル |
-| `public/admin/` `js/admin.js` | 管理画面（予約一覧・営業日・設定・CSV） |
-| `public/js/schedule.js` | 営業日とコマの計算（画面とWorkerで共通） |
-| `public/js/core.js` | 予約ルールの判定（画面のお試しモードとWorkerで共通） |
-| `public/js/api.js` | API呼び出しとお試しモード |
-| `src/index.js` | Worker本体（D1・Access確認・Turnstile・メール・毎朝の処理） |
-| `schema.sql` | データベースの定義 |
-| `wrangler.jsonc` | Cloudflareの設定 |
+そのあと `Shared.gs` を Apps Script に貼り直し、デプロイを「新しいバージョン」で更新する（URLは変わらない）。
 
 ## 毎朝9:00の自動処理
-- 翌日にレッスンがある家庭へリマインドメール
-- レッスンの月から `RETENTION_DAYS`（既定365日）が過ぎた予約は、名前・連絡先を消す
+- 翌日にレッスンがある家庭へお知らせメール
+- レッスンの月から1年過ぎた予約は、名前・連絡先を消す
