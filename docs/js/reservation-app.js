@@ -7,6 +7,9 @@ import { html, React, motion, AnimatePresence, ease, tap, hoverLift, fadeUp, mon
 
 const { useState, useEffect } = React;
 const TOKEN_RE = /^[0-9a-f]{48}$/;
+// 「日時を変更」を押したときにすぐカレンダーを出せるよう、予約の月の空き状況を先に読んでおく
+const availCache = {};
+const getAvail = (month, fresh) => ((!fresh && availCache[month]) || (availCache[month] = call("GET", `/api/availability?month=${month}`).catch((e) => { delete availCache[month]; throw e; })));
 
 function App() {
   const [token, setToken] = useState(location.hash.slice(1));
@@ -26,7 +29,7 @@ function App() {
     setRv(null); setErr("");
     if (!TOKEN_RE.test(token)) return;
     Promise.all([call("GET", "/api/config"), call("GET", `/api/reservations/${token}`)])
-      .then(([c, r]) => { setCfg(c); setRv(r.reservation); }).catch((e) => setErr(e.message));
+      .then(([c, r]) => { setCfg(c); setRv(r.reservation); getAvail(r.reservation.month).catch(() => {}); }).catch((e) => setErr(e.message));
   }, [token]);
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(""), 2600); return () => clearTimeout(t); }, [toast]);
 
@@ -91,7 +94,7 @@ function Picker({ cfg, rv, token, lessonId, onClose, onSaved }) {
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const cur = lessonId && rv.lessons.find((l) => l.id === lessonId);
-  const load = () => call("GET", `/api/availability?month=${rv.month}`).then(setAvail).catch((e) => setErr(e.message));
+  const load = (fresh) => getAvail(rv.month, fresh).then(setAvail).catch((e) => setErr(e.message));
   useEffect(() => { load(); }, []);
 
   const busyDates = new Set(rv.lessons.filter((l) => l.status === "active" && l.id !== lessonId).map((l) => l.date));
@@ -100,8 +103,8 @@ function Picker({ cfg, rv, token, lessonId, onClose, onSaved }) {
 
   const save = async () => {
     setBusy(true); setErr("");
-    try { onSaved((await call("POST", `/api/reservations/${token}/change`, { lessonId, ...pick })).reservation); }
-    catch (e) { setErr(e.message); setBusy(false); if (e.code === "full") { setPick(null); load(); } }
+    try { const r = (await call("POST", `/api/reservations/${token}/change`, { lessonId, ...pick })).reservation; delete availCache[rv.month]; getAvail(rv.month).catch(() => {}); onSaved(r); }
+    catch (e) { setErr(e.message); setBusy(false); if (e.code === "full") { setPick(null); load(true); } }
   };
 
   return html`<${motion.section} className="panel" initial=${{ opacity: 0, y: 24 }} animate=${{ opacity: 1, y: 0, transition: { duration: 0.32, ease } }} exit=${{ opacity: 0, y: 16, transition: { duration: 0.18 } }}

@@ -2,7 +2,7 @@
 import { createRoot } from "react-dom/client";
 import { MotionConfig } from "framer-motion";
 import { call, isDemo, resetDemo } from "./api.js";
-import { addMonths, addDays, formatDateJa } from "./schedule.js";
+import { addMonths, addDays, formatDateJa, nowJST } from "./schedule.js";
 import {
   html, React, motion, AnimatePresence, ease, tap, hoverLift, fadeUp, monthLabel, storage, copyText,
   Header, Footer, DemoBar, ErrorBox, Button, hoursSummary, trim0, slotMark, Calendar, Legend, Slots,
@@ -10,6 +10,7 @@ import {
 
 const { useState, useEffect, useRef } = React;
 const PROFILE_KEY = "mowa-yoyaku-profile";
+const CFG_KEY = "mowa-yoyaku-config";
 const FIELDS = ["childName", "grade", "parentName", "email", "phone", "note"];
 const STEPS = ["コース", "日時", "お子さま", "確認"];
 
@@ -29,11 +30,14 @@ function App() {
   const top = useRef(null);
 
   useEffect(() => {
-    call("GET", "/api/config").then((c) => {
-      setCfg(c);
-      const m = c.today.slice(0, 7);
-      getAvail(m).catch(() => {}); getAvail(addMonths(m, 1)).catch(() => {});
-    }).catch((e) => setLoadErr(e.message));
+    // 空き状況（今月から3か月分）は設定の読み込みを待たずに同時に読み始める
+    const m = nowJST().month;
+    [m, addMonths(m, 1), addMonths(m, 2)].forEach((x) => getAvail(x).catch(() => {}));
+    // 前回開いたときの設定があれば、まずそれで画面を出す（あとで最新に入れかえる）
+    const cached = storage(CFG_KEY);
+    if (cached) setCfg({ ...cached, today: nowJST().date });
+    call("GET", "/api/config").then((c) => { setCfg(c); storage(CFG_KEY, c); })
+      .catch((e) => { if (!cached) setLoadErr(e.message); });
   }, []);
 
   const go = (n) => { setDirStep(n > step ? 1 : -1); setStep(n); top.current?.scrollIntoView({ behavior: "smooth", block: "start" }); };

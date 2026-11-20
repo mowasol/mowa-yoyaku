@@ -43,12 +43,12 @@ function App() {
   }, []);
   const load = useCallback(() => fetchMonth(month).catch((e) => setErr(e.message)), [month]);
   useEffect(() => {
-    if (!settings) return;
+    // 設定の読み込みを待たずに、表示する月の予約も同時に読み始める
     if (cache.current[month]) setData(cache.current[month]); // 覚えている分をすぐ出し、裏で最新に入れかえる
     fetchMonth(month).then(() => {
       [addMonths(month, -1), addMonths(month, 1)].forEach((m) => { if (!cache.current[m]) fetchMonth(m).catch(() => {}); });
     }).catch((e) => setErr(e.message));
-  }, [month, settings]);
+  }, [month]);
   // 画面を先に変えてから裏で保存する（待たずに次の操作ができる）
   const patch = useCallback((fn) => { editSeq.current += 1; setData((d) => { const nd = fn(d); cache.current[nd.month] = nd; return nd; }); }, []);
   const shown = data && data.month === month ? data : null;
