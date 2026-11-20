@@ -70,12 +70,33 @@ function rows(k, cols) {
   if (n <= 0) return [];
   return sh.getRange(2, 1, n, cols.length).getValues().map((r, i) => {
     const o = { _row: i + 2 };
-    cols.forEach((c, j) => { o[c] = r[j] === "" ? "" : String(r[j]); });
+    cols.forEach((c, j) => { o[c] = cellStr(r[j], c); });
     return o;
   });
 }
+
+// シートが「2026-12-05」「16:00」などを日付として保存してしまった場合も、元の文字に戻して読む
+function cellStr(v, col) {
+  if (v === "" || v === null || v === undefined) return "";
+  if (Object.prototype.toString.call(v) === "[object Date]") {
+    const tz = "Asia/Tokyo";
+    if (col === "time") return Utilities.formatDate(v, tz, "HH:mm");
+    if (col === "month") return Utilities.formatDate(v, tz, "yyyy-MM");
+    if (col === "created_at") return v.toISOString();
+    return Utilities.formatDate(v, tz, "yyyy-MM-dd");
+  }
+  return String(v);
+}
+
+// 行を足すときは、先にセルを「書式なしテキスト」にしてから書く（日付への自動変換を防ぐ）
+function appendText(k, values) {
+  const sh = sheet(k);
+  const range = sh.getRange(sh.getLastRow() + 1, 1, 1, values.length);
+  range.setNumberFormat("@");
+  range.setValues([values.map((v) => String(v ?? ""))]);
+}
 function lessonRows() { return rows("lessons", LES_COLS).map((l) => ({ ...l, id: Number(l.id), reminded: l.reminded === "1" })); }
-function setCell(k, row, col, value) { sheet(k).getRange(row, col).setValue(value); }
+function setCell(k, row, col, value) { sheet(k).getRange(row, col).setNumberFormat("@").setValue(String(value)); }
 function withLock(fn) {
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
@@ -97,7 +118,7 @@ const store = {
   setOverride(date, v) {
     const r = rows("overrides", ["date", "open", "note"]).find((x) => x.date === date);
     const vals = [[date, v.open ? "1" : "0", v.note || ""]];
-    if (r) sheet("overrides").getRange(r._row, 1, 1, 3).setValues(vals); else sheet("overrides").appendRow(vals[0]);
+    if (r) sheet("overrides").getRange(r._row, 1, 1, 3).setNumberFormat("@").setValues(vals); else appendText("overrides", vals[0]);
   },
   deleteOverride(date) {
     const r = rows("overrides", ["date", "open", "note"]).find((x) => x.date === date);
@@ -113,11 +134,11 @@ const store = {
       const all = lessonRows();
       const count = (d, t) => all.filter((l) => l.status === "active" && l.date === d && l.time === t).length;
       if (lessons.some((l) => count(l.date, l.time) >= capacity)) throw full();
-      sheet("reservations").appendRow(RES_COLS.map((c) => (c === "anonymized" ? "0" : r[c] || "")));
+      appendText("reservations", RES_COLS.map((c) => (c === "anonymized" ? "0" : r[c] || "")));
       let id = all.reduce((m, l) => Math.max(m, l.id), 0);
       for (const l of lessons) {
         id += 1;
-        sheet("lessons").appendRow([String(id), r.id, l.date, l.time, "active", "0", ""]);
+        appendText("lessons", [String(id), r.id, l.date, l.time, "active", "0", ""]);
       }
     });
     calendarSyncReservation(r.id);
@@ -140,7 +161,7 @@ const store = {
       if (n >= capacity) throw full();
       if (old) setCell("lessons", old._row, 5, "cancelled");
       const id = all.reduce((m, x) => Math.max(m, x.id), 0) + 1;
-      sheet("lessons").appendRow([String(id), rid, l.date, l.time, "active", "0", ""]);
+      appendText("lessons", [String(id), rid, l.date, l.time, "active", "0", ""]);
     });
     calendarSyncReservation(rid);
   },
@@ -283,7 +304,7 @@ function dailyJob() {
   const cutoff = addDays(nowJST().date, -365).slice(0, 7);
   rows("reservations", RES_COLS).forEach((r) => {
     if (r.anonymized !== "1" && r.month < cutoff) {
-      sheet("reservations").getRange(r._row, 5, 1, 8).setValues([["(削除済み)", r.grade, "(削除済み)", "", "", "", r.created_at, "1"]]);
+      sheet("reservations").getRange(r._row, 5, 1, 8).setNumberFormat("@").setValues([["(削除済み)", r.grade, "(削除済み)", "", "", "", r.created_at, "1"]]);
     }
   });
 }
