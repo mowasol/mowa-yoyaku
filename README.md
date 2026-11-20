@@ -48,7 +48,8 @@ python -m http.server 8767 --directory docs
 3. プロジェクトの設定 → スクリプト プロパティに追加
    - `SITE_URL`：予約ページのURL（最初は `https://mowasol.github.io/mowa-yoyaku`、ドメイン設定後は `https://yoyaku.mowasol.com`）
    - `CALENDAR_ID`：予定を入れるGoogleカレンダーのID（カレンダーの設定 → カレンダーの統合）
-   - `ADMIN_NOTIFY_EMAIL`：新規予約の通知先
+   - `ADMIN_NOTIFY_EMAIL`：新規予約の通知先（`school@mowasol.com`）
+   - `REPLY_TO`：保護者の返信先（空なら `school@mowasol.com`）
 4. スプレッドシートを開き直し、メニュー「予約システム」→「初期設定」（権限の確認が出たら許可）
 
 ### 2. 公開URLを2つ作る（デプロイ）

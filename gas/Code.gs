@@ -9,7 +9,8 @@
  * スクリプトのプロパティ（プロジェクトの設定 > スクリプト プロパティ）：
  *   SITE_URL           予約ページのURL（例：https://yoyaku.mowasol.com）
  *   CALENDAR_ID        予定を入れるGoogleカレンダーのID（空ならカレンダー連携しない）
- *   ADMIN_NOTIFY_EMAIL 新規予約の通知先（空なら通知しない）
+ *   ADMIN_NOTIFY_EMAIL 新規予約の通知先（例：school@mowasol.com。空なら通知しない）
+ *   REPLY_TO           保護者が返信したときの宛先（空なら school@mowasol.com）
  */
 
 const SHEETS = {
@@ -32,6 +33,8 @@ var crypto = {
 
 const props = () => PropertiesService.getScriptProperties();
 const siteUrl = () => String(props().getProperty("SITE_URL") || "").replace(/\/$/, "");
+// 確認メールの返信先は教室の共用アドレス（スタッフ全員に届く）
+const replyTo = () => props().getProperty("REPLY_TO") || "school@mowasol.com";
 
 // ---------- メニュー・初期設定 ----------
 function onOpen() {
@@ -194,7 +197,7 @@ function notify(kind, d) {
   const title = { created: "ご予約を受け付けました", cancelled: "キャンセルを受け付けました", changed: "日時の変更を受け付けました" }[kind];
   const body = `${rv.parentName} 様\n\n${school}です。${title}。\n\n■ コース：${rv.planName}\n■ お子さま：${rv.childName}（${rv.grade}）\n■ 予約中の日時\n${lessonLines(rv)}\n\n予約の確認・変更・キャンセルはこちら（開始${settings.cancelHoursBefore}時間前まで）：\n${link}\n\nこのリンクはご家庭専用です。他の方に共有しないでください。\n\n${school}`;
   try {
-    MailApp.sendEmail({ to: rv.email, subject: `【${school}】${title}`, body, name: school });
+    MailApp.sendEmail({ to: rv.email, subject: `【${school}】${title}`, body, name: school, replyTo: replyTo() });
     const admin = props().getProperty("ADMIN_NOTIFY_EMAIL");
     if (admin) MailApp.sendEmail({ to: admin, subject: `[予約${{ created: "新規", cancelled: "キャンセル", changed: "変更" }[kind]}] ${rv.childName}（${rv.grade}）`, body: `${rv.planName}\n${lessonLines(rv)}\n保護者：${rv.parentName}\nメール：${rv.email}\n電話：${rv.phone}\nご要望：${rv.note}`, name: school });
   } catch (e) { console.error("mail failed", e); }
@@ -266,7 +269,7 @@ function dailyJob() {
     const r = res[l.reservation_id];
     if (!r || r.anonymized === "1" || !r.email) return;
     try {
-      MailApp.sendEmail({ to: r.email, name: settings.schoolName, subject: `【${settings.schoolName}】明日のレッスンのお知らせ`,
+      MailApp.sendEmail({ to: r.email, name: settings.schoolName, replyTo: replyTo(), subject: `【${settings.schoolName}】明日のレッスンのお知らせ`,
         body: `${r.parent_name} 様\n\n明日 ${formatDateJa(l.date)} ${l.time}〜${endTime(l.time, settings)} は、${r.child_name}さんのレッスンです。お待ちしています。\n\n予約の確認：${siteUrl()}/reservation.html#${r.token}\n\n${settings.schoolName}` });
       setCell("lessons", l._row, 6, "1");
     } catch (e) { console.error("reminder failed", e); }
