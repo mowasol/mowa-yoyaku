@@ -19,6 +19,12 @@ export function mergeSettings(saved) {
     const r = s.weekly[d];
     if (r && !Array.isArray(r.slots)) s.weekly[d] = structuredCloneSafe(DEFAULT_SETTINGS.weekly[d] || { open: false, slots: [] });
   }
+  // 古い設定（月1回・月2回コース、定員4人）で保存されていたら、新しい標準に置きかえる
+  if (!saved || !(Number(saved.schemaVersion) >= 2)) {
+    s.plans = structuredCloneSafe(DEFAULT_SETTINGS.plans);
+    s.capacity = DEFAULT_SETTINGS.capacity;
+    s.schemaVersion = DEFAULT_SETTINGS.schemaVersion;
+  }
   return s;
 }
 
@@ -55,9 +61,9 @@ export function createApi(store, opts = {}) {
     const days = dates.map((date) => {
       const info = dayInfo(date, settings, overrides);
       return {
-        date, open: info.open, reason: info.reason,
+        date, open: info.open, reason: info.reason, capacity: info.capacity,
         slots: info.slots.map((time) => {
-          const remaining = Math.max(0, settings.capacity - (counts[`${date} ${time}`] || 0));
+          const remaining = Math.max(0, info.capacity - (counts[`${date} ${time}`] || 0));
           return { time, end: endTime(time, settings, date), remaining, bookable: remaining > 0 && isBookable(date, time, settings, t) };
         }),
       };
@@ -72,6 +78,7 @@ export function createApi(store, opts = {}) {
     const info = dayInfo(date, settings, overrides);
     if (!info.open || !info.slots.includes(time)) throw bad(`${formatDateJa(date)} ${time} は予約できない時間です`);
     if (!isBookable(date, time, settings, now())) throw bad(`${formatDateJa(date)} ${time} は受付期間外です`);
+    return info;
   }
 
   function publicReservation(res, lessons, settings) {
@@ -95,14 +102,15 @@ export function createApi(store, opts = {}) {
     const plan = settings.plans.find((p) => p.id === body.plan);
     if (!plan) throw bad("コースを選んでください");
     const lessons = Array.isArray(body.lessons) ? body.lessons : [];
-    if (lessons.length !== plan.times) throw bad(`${plan.name}は${plan.times}回分の日時を選んでください`);
+    if (lessons.length < 1) throw bad("日時を1つ以上選んでください");
+    if (lessons.length > plan.times) throw bad(`${plan.name}は、ひと月${plan.times}回までです`);
     const month = lessons[0]?.date?.slice(0, 7);
     const seen = new Set();
     for (const l of lessons) {
       if (l.date?.slice(0, 7) !== month) throw bad("同じ月の中で日時を選んでください");
       if (seen.has(l.date)) throw bad("1日に1回までです。別の日を選んでください");
       seen.add(l.date);
-      await assertSlotValid(settings, l.date, l.time);
+      l.cap = (await assertSlotValid(settings, l.date, l.time)).capacity;
     }
     const email = str(body.email, 120, "メールアドレス");
     if (!EMAIL_RE.test(email)) throw bad("メールアドレスの形式を確認してください");
@@ -117,7 +125,7 @@ export function createApi(store, opts = {}) {
       created_at: new Date(now()).toISOString(),
     };
     const sorted = [...lessons].sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
-    await store.createReservation(res, sorted.map((l) => ({ date: l.date, time: l.time })), settings.capacity);
+    await store.createReservation(res, sorted.map((l) => ({ date: l.date, time: l.time, cap: l.cap })), settings.capacity);
     const saved = await store.getReservation(res.token);
     const out = publicReservation(saved.res, saved.lessons, settings);
     await ctx?.notify?.("created", { token: res.token, reservation: out, settings });
@@ -156,12 +164,12 @@ export function createApi(store, opts = {}) {
       if (!old) throw bad("変更できる予約がありません");
       if (!canCancel(old.date, old.time, settings, now())) throw bad(`開始${settings.cancelHoursBefore}時間前を過ぎたため、Webでは変更できません。教室へご連絡ください`);
     } else if (active.length >= (plan?.times || 1)) {
-      throw bad("この月の回数分はすでに予約済みです");
+      throw bad(`${plan?.name || "このコース"}は、ひと月${plan?.times || 1}回までです。この月の回数分はすでに予約済みです`);
     }
     if (body.date?.slice(0, 7) !== res.month) throw bad("同じ月の中で日時を選んでください");
     if (active.some((l) => l.date === body.date && l !== old)) throw bad("1日に1回までです。別の日を選んでください");
-    await assertSlotValid(settings, body.date, body.time);
-    await store.replaceLesson(old ? old.id : null, res.id, { date: body.date, time: body.time }, settings.capacity);
+    const info = await assertSlotValid(settings, body.date, body.time);
+    await store.replaceLesson(old ? old.id : null, res.id, { date: body.date, time: body.time, cap: info.capacity }, settings.capacity);
     const saved = await store.getReservation(token);
     const out = publicReservation(saved.res, saved.lessons, settings);
     await ctx?.notify?.("changed", { token, reservation: out, from: old, to: body, settings });
@@ -253,7 +261,9 @@ export function createApi(store, opts = {}) {
       }
       if (seg[1] === "overrides" && DATE_RE.test(seg[2] || "")) {
         if (method === "PUT") {
-          await store.setOverride(seg[2], { open: !!body.open, note: str(body.note, 40, "メモ", false) });
+          const cap = body.capacity === "" || body.capacity == null ? "" : Number(body.capacity);
+          if (cap !== "" && !(cap >= 1 && cap <= 50)) throw bad("その日の定員は1〜50人にしてください");
+          await store.setOverride(seg[2], { open: !!body.open, note: str(body.note, 40, "メモ", false), capacity: cap });
           return { ok: true };
         }
         if (method === "DELETE") { await store.deleteOverride(seg[2]); return { ok: true }; }

@@ -17,13 +17,14 @@ function WEEKEND_SLOTS() {
 
 export const DEFAULT_SETTINGS = {
   schoolName: "mowaプログラミング教室",
-  // コース（内容はお子さまごとに個別。回数だけが違う）
+  schemaVersion: 2,
+  // コース（内容はお子さまごとに個別。times は「ひと月に予約できる上限回数」）
   plans: [
-    { id: "m1", name: "月1回コース", times: 1 },
-    { id: "m2", name: "月2回コース", times: 2 },
+    { id: "w1", name: "週1回コース", times: 4, desc: "毎週かよう方。ひと月4回まで" },
+    { id: "bw", name: "隔週コース", times: 2, desc: "2週に1回かよう方。ひと月2回まで" },
   ],
   lessonMinutes: 60,   // （旧方式の予備）コマの時刻が決まっていない曜日で使う1コマの長さ
-  capacity: 4,         // 1コマの定員
+  capacity: 6,         // 1コマの定員（日ごとに「営業日」で変えられる）
   // 曜日ごとのコマ（0=日 ... 6=土）。slots に開始・終了を1コマずつ書く
   weekly: {
     0: { open: true, slots: WEEKEND_SLOTS() },
@@ -103,7 +104,9 @@ export function dayInfo(dateStr, settings, overrides = {}) {
   const max = Number(settings.maxPerWeekdayPerMonth) || 0;
   if (open && max > 0 && nthWeekday(dateStr) > max) { open = false; reason = `第${nthWeekday(dateStr)}${WEEKDAYS[dow]}曜はお休み`; }
   if (ov) { open = !!ov.open; reason = ov.note || (open ? "" : "お休み"); }
-  return { date: dateStr, dow, open, reason, slots: open ? slotTimes(rule, settings) : [] };
+  // その日の定員（先生が少ない日などは「営業日」で個別に減らせる）
+  const capacity = ov && Number(ov.capacity) > 0 ? Number(ov.capacity) : Number(settings.capacity);
+  return { date: dateStr, dow, open, reason, capacity, slots: open ? slotTimes(rule, settings) : [] };
 }
 
 // その曜日のコマ一覧 [{start, end}]（時刻を個別に決めた slots を優先。無ければ営業時間から作る）

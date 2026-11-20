@@ -20,13 +20,14 @@ function WEEKEND_SLOTS() {
 
 const DEFAULT_SETTINGS = {
   schoolName: "mowaプログラミング教室",
-  // コース（内容はお子さまごとに個別。回数だけが違う）
+  schemaVersion: 2,
+  // コース（内容はお子さまごとに個別。times は「ひと月に予約できる上限回数」）
   plans: [
-    { id: "m1", name: "月1回コース", times: 1 },
-    { id: "m2", name: "月2回コース", times: 2 },
+    { id: "w1", name: "週1回コース", times: 4, desc: "毎週かよう方。ひと月4回まで" },
+    { id: "bw", name: "隔週コース", times: 2, desc: "2週に1回かよう方。ひと月2回まで" },
   ],
   lessonMinutes: 60,   // （旧方式の予備）コマの時刻が決まっていない曜日で使う1コマの長さ
-  capacity: 4,         // 1コマの定員
+  capacity: 6,         // 1コマの定員（日ごとに「営業日」で変えられる）
   // 曜日ごとのコマ（0=日 ... 6=土）。slots に開始・終了を1コマずつ書く
   weekly: {
     0: { open: true, slots: WEEKEND_SLOTS() },
@@ -106,7 +107,9 @@ function dayInfo(dateStr, settings, overrides = {}) {
   const max = Number(settings.maxPerWeekdayPerMonth) || 0;
   if (open && max > 0 && nthWeekday(dateStr) > max) { open = false; reason = `第${nthWeekday(dateStr)}${WEEKDAYS[dow]}曜はお休み`; }
   if (ov) { open = !!ov.open; reason = ov.note || (open ? "" : "お休み"); }
-  return { date: dateStr, dow, open, reason, slots: open ? slotTimes(rule, settings) : [] };
+  // その日の定員（先生が少ない日などは「営業日」で個別に減らせる）
+  const capacity = ov && Number(ov.capacity) > 0 ? Number(ov.capacity) : Number(settings.capacity);
+  return { date: dateStr, dow, open, reason, capacity, slots: open ? slotTimes(rule, settings) : [] };
 }
 
 // その曜日のコマ一覧 [{start, end}]（時刻を個別に決めた slots を優先。無ければ営業時間から作る）
@@ -206,6 +209,12 @@ function mergeSettings(saved) {
     const r = s.weekly[d];
     if (r && !Array.isArray(r.slots)) s.weekly[d] = structuredCloneSafe(DEFAULT_SETTINGS.weekly[d] || { open: false, slots: [] });
   }
+  // 古い設定（月1回・月2回コース、定員4人）で保存されていたら、新しい標準に置きかえる
+  if (!saved || !(Number(saved.schemaVersion) >= 2)) {
+    s.plans = structuredCloneSafe(DEFAULT_SETTINGS.plans);
+    s.capacity = DEFAULT_SETTINGS.capacity;
+    s.schemaVersion = DEFAULT_SETTINGS.schemaVersion;
+  }
   return s;
 }
 
@@ -242,9 +251,9 @@ function createApi(store, opts = {}) {
     const days = dates.map((date) => {
       const info = dayInfo(date, settings, overrides);
       return {
-        date, open: info.open, reason: info.reason,
+        date, open: info.open, reason: info.reason, capacity: info.capacity,
         slots: info.slots.map((time) => {
-          const remaining = Math.max(0, settings.capacity - (counts[`${date} ${time}`] || 0));
+          const remaining = Math.max(0, info.capacity - (counts[`${date} ${time}`] || 0));
           return { time, end: endTime(time, settings, date), remaining, bookable: remaining > 0 && isBookable(date, time, settings, t) };
         }),
       };
@@ -259,6 +268,7 @@ function createApi(store, opts = {}) {
     const info = dayInfo(date, settings, overrides);
     if (!info.open || !info.slots.includes(time)) throw bad(`${formatDateJa(date)} ${time} は予約できない時間です`);
     if (!isBookable(date, time, settings, now())) throw bad(`${formatDateJa(date)} ${time} は受付期間外です`);
+    return info;
   }
 
   function publicReservation(res, lessons, settings) {
@@ -282,14 +292,15 @@ function createApi(store, opts = {}) {
     const plan = settings.plans.find((p) => p.id === body.plan);
     if (!plan) throw bad("コースを選んでください");
     const lessons = Array.isArray(body.lessons) ? body.lessons : [];
-    if (lessons.length !== plan.times) throw bad(`${plan.name}は${plan.times}回分の日時を選んでください`);
+    if (lessons.length < 1) throw bad("日時を1つ以上選んでください");
+    if (lessons.length > plan.times) throw bad(`${plan.name}は、ひと月${plan.times}回までです`);
     const month = lessons[0]?.date?.slice(0, 7);
     const seen = new Set();
     for (const l of lessons) {
       if (l.date?.slice(0, 7) !== month) throw bad("同じ月の中で日時を選んでください");
       if (seen.has(l.date)) throw bad("1日に1回までです。別の日を選んでください");
       seen.add(l.date);
-      assertSlotValid(settings, l.date, l.time);
+      l.cap = (assertSlotValid(settings, l.date, l.time)).capacity;
     }
     const email = str(body.email, 120, "メールアドレス");
     if (!EMAIL_RE.test(email)) throw bad("メールアドレスの形式を確認してください");
@@ -304,7 +315,7 @@ function createApi(store, opts = {}) {
       created_at: new Date(now()).toISOString(),
     };
     const sorted = [...lessons].sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
-    store.createReservation(res, sorted.map((l) => ({ date: l.date, time: l.time })), settings.capacity);
+    store.createReservation(res, sorted.map((l) => ({ date: l.date, time: l.time, cap: l.cap })), settings.capacity);
     const saved = store.getReservation(res.token);
     const out = publicReservation(saved.res, saved.lessons, settings);
     ctx?.notify?.("created", { token: res.token, reservation: out, settings });
@@ -343,12 +354,12 @@ function createApi(store, opts = {}) {
       if (!old) throw bad("変更できる予約がありません");
       if (!canCancel(old.date, old.time, settings, now())) throw bad(`開始${settings.cancelHoursBefore}時間前を過ぎたため、Webでは変更できません。教室へご連絡ください`);
     } else if (active.length >= (plan?.times || 1)) {
-      throw bad("この月の回数分はすでに予約済みです");
+      throw bad(`${plan?.name || "このコース"}は、ひと月${plan?.times || 1}回までです。この月の回数分はすでに予約済みです`);
     }
     if (body.date?.slice(0, 7) !== res.month) throw bad("同じ月の中で日時を選んでください");
     if (active.some((l) => l.date === body.date && l !== old)) throw bad("1日に1回までです。別の日を選んでください");
-    assertSlotValid(settings, body.date, body.time);
-    store.replaceLesson(old ? old.id : null, res.id, { date: body.date, time: body.time }, settings.capacity);
+    const info = assertSlotValid(settings, body.date, body.time);
+    store.replaceLesson(old ? old.id : null, res.id, { date: body.date, time: body.time, cap: info.capacity }, settings.capacity);
     const saved = store.getReservation(token);
     const out = publicReservation(saved.res, saved.lessons, settings);
     ctx?.notify?.("changed", { token, reservation: out, from: old, to: body, settings });
@@ -440,7 +451,9 @@ function createApi(store, opts = {}) {
       }
       if (seg[1] === "overrides" && DATE_RE.test(seg[2] || "")) {
         if (method === "PUT") {
-          store.setOverride(seg[2], { open: !!body.open, note: str(body.note, 40, "メモ", false) });
+          const cap = body.capacity === "" || body.capacity == null ? "" : Number(body.capacity);
+          if (cap !== "" && !(cap >= 1 && cap <= 50)) throw bad("その日の定員は1〜50人にしてください");
+          store.setOverride(seg[2], { open: !!body.open, note: str(body.note, 40, "メモ", false), capacity: cap });
           return { ok: true };
         }
         if (method === "DELETE") { store.deleteOverride(seg[2]); return { ok: true }; }

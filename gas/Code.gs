@@ -15,12 +15,13 @@
 
 const SHEETS = {
   settings: { name: "設定", head: ["項目", "内容(JSON)"] },
-  overrides: { name: "休業日", head: ["日付", "営業(1/0)", "メモ"] },
+  overrides: { name: "休業日", head: ["日付", "営業(1/0)", "メモ", "その日の定員"] },
   reservations: { name: "予約", head: ["id", "token", "コース", "月", "お子さま", "学年", "保護者", "メール", "電話", "ご要望", "受付日時", "匿名化"] },
   lessons: { name: "レッスン", head: ["id", "予約id", "日付", "時刻", "状態", "前日通知", "カレンダー予定ID"] },
 };
 const RES_COLS = ["id", "token", "plan", "month", "child_name", "grade", "parent_name", "email", "phone", "note", "created_at", "anonymized"];
 const LES_COLS = ["id", "reservation_id", "date", "time", "status", "reminded", "event_id"];
+const OV_COLS = ["date", "open", "note", "capacity"];
 
 // Apps Script には crypto が無いので、乱数は Utilities のUUIDとハッシュから作る
 var crypto = {
@@ -64,7 +65,17 @@ function setup() {
 
 // ---------- シートの読み書き ----------
 function sheet(k) { return SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS[k].name); }
+// 1回の処理の中では、同じシートを何度も読まないよう覚えておく（書き込んだら忘れる）
+let MEMO = {};
 function rows(k, cols) {
+  const key = k + ":" + cols.length;
+  if (MEMO[key]) return MEMO[key].map((o) => ({ ...o }));
+  const out = readRows(k, cols);
+  MEMO[key] = out;
+  return out.map((o) => ({ ...o }));
+}
+function forget(k) { Object.keys(MEMO).forEach((x) => { if (x.indexOf(k + ":") === 0) delete MEMO[x]; }); }
+function readRows(k, cols) {
   const sh = sheet(k);
   const n = sh.getLastRow() - 1;
   if (n <= 0) return [];
@@ -90,38 +101,49 @@ function cellStr(v, col) {
 
 // 行を足すときは、先にセルを「書式なしテキスト」にしてから書く（日付への自動変換を防ぐ）
 function appendText(k, values) {
+  forget(k);
   const sh = sheet(k);
   const range = sh.getRange(sh.getLastRow() + 1, 1, 1, values.length);
   range.setNumberFormat("@");
   range.setValues([values.map((v) => String(v ?? ""))]);
 }
 function lessonRows() { return rows("lessons", LES_COLS).map((l) => ({ ...l, id: Number(l.id), reminded: l.reminded === "1" })); }
-function setCell(k, row, col, value) { sheet(k).getRange(row, col).setNumberFormat("@").setValue(String(value)); }
+function setCell(k, row, col, value) { forget(k); sheet(k).getRange(row, col).setNumberFormat("@").setValue(String(value)); }
 function withLock(fn) {
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
+  MEMO = {}; // ロック中は必ず最新を読む
   try { return fn(); } finally { lock.releaseLock(); }
 }
 const full = () => new ApiError(409, "タッチの差で満席になったコマがあります。別の日時を選び直してください", "full");
 
 const store = {
   getSettings() {
-    const v = sheet("settings").getRange("B2").getValue();
+    // 設定は変更が少ないので5分間だけ一時保存（保存したらすぐ入れかえる）
+    const cache = CacheService.getScriptCache();
+    let v = cache.get("settings");
+    if (!v) { v = String(sheet("settings").getRange("B2").getValue() || ""); if (v) cache.put("settings", v, 300); }
     return mergeSettings(v ? JSON.parse(v) : null);
   },
-  saveSettings(s) { sheet("settings").getRange("A2:B2").setValues([["settings", JSON.stringify(s)]]); },
+  saveSettings(s) {
+    const v = JSON.stringify(s);
+    sheet("settings").getRange("A2:B2").setValues([["settings", v]]);
+    CacheService.getScriptCache().put("settings", v, 300);
+  },
   getOverrides(from, to) {
     const out = {};
-    rows("overrides", ["date", "open", "note"]).forEach((r) => { if (r.date >= from && r.date <= to) out[r.date] = { open: r.open === "1", note: r.note }; });
+    rows("overrides", OV_COLS).forEach((r) => { if (r.date >= from && r.date <= to) out[r.date] = { open: r.open === "1", note: r.note, capacity: r.capacity ? Number(r.capacity) : "" }; });
     return out;
   },
   setOverride(date, v) {
-    const r = rows("overrides", ["date", "open", "note"]).find((x) => x.date === date);
-    const vals = [[date, v.open ? "1" : "0", v.note || ""]];
-    if (r) sheet("overrides").getRange(r._row, 1, 1, 3).setNumberFormat("@").setValues(vals); else appendText("overrides", vals[0]);
+    const r = rows("overrides", OV_COLS).find((x) => x.date === date);
+    const vals = [[date, v.open ? "1" : "0", v.note || "", v.capacity === "" || v.capacity == null ? "" : String(v.capacity)]];
+    forget("overrides");
+    if (r) sheet("overrides").getRange(r._row, 1, 1, 4).setNumberFormat("@").setValues(vals); else appendText("overrides", vals[0]);
   },
   deleteOverride(date) {
-    const r = rows("overrides", ["date", "open", "note"]).find((x) => x.date === date);
+    const r = rows("overrides", OV_COLS).find((x) => x.date === date);
+    forget("overrides");
     if (r) sheet("overrides").deleteRow(r._row);
   },
   countActive(from, to) {
@@ -133,7 +155,7 @@ const store = {
     withLock(() => {
       const all = lessonRows();
       const count = (d, t) => all.filter((l) => l.status === "active" && l.date === d && l.time === t).length;
-      if (lessons.some((l) => count(l.date, l.time) >= capacity)) throw full();
+      if (lessons.some((l) => count(l.date, l.time) >= (l.cap || capacity))) throw full();
       appendText("reservations", RES_COLS.map((c) => (c === "anonymized" ? "0" : r[c] || "")));
       let id = all.reduce((m, l) => Math.max(m, l.id), 0);
       for (const l of lessons) {
@@ -158,7 +180,7 @@ const store = {
       const all = lessonRows();
       const old = oldId ? all.find((x) => x.id === oldId && x.reservation_id === rid) : null;
       const n = all.filter((x) => x.status === "active" && x.date === l.date && x.time === l.time && x !== old).length;
-      if (n >= capacity) throw full();
+      if (n >= (l.cap || capacity)) throw full();
       if (old) setCell("lessons", old._row, 5, "cancelled");
       const id = all.reduce((m, x) => Math.max(m, x.id), 0) + 1;
       appendText("lessons", [String(id), rid, l.date, l.time, "active", "0", ""]);
@@ -230,6 +252,7 @@ function notify(kind, d) {
 
 // ---------- 予約ページからの受付（公開URL） ----------
 function doPost(e) {
+  MEMO = {};
   let out;
   try {
     const req = JSON.parse((e && e.postData && e.postData.contents) || "{}");
@@ -273,6 +296,7 @@ function currentAdmin() {
 
 // 管理画面から google.script.run.api(...) で呼ばれる
 function api(json) {
+  MEMO = {};
   let out;
   try {
     const email = currentAdmin();

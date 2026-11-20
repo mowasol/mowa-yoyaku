@@ -13,6 +13,10 @@ const PROFILE_KEY = "mowa-yoyaku-profile";
 const FIELDS = ["childName", "grade", "parentName", "email", "phone", "note"];
 const STEPS = ["コース", "日時", "お子さま", "確認"];
 
+// 空き状況は、ページを開いた時点で今月・来月分を先に読み込んでおく（カレンダーをすぐ出すため）
+const availCache = {};
+const getAvail = (month) => (availCache[month] ||= call("GET", `/api/availability?month=${month}`).catch((e) => { delete availCache[month]; throw e; }));
+
 function App() {
   const [cfg, setCfg] = useState(null);
   const [loadErr, setLoadErr] = useState("");
@@ -24,7 +28,13 @@ function App() {
   const [done, setDone] = useState(null);
   const top = useRef(null);
 
-  useEffect(() => { call("GET", "/api/config").then(setCfg).catch((e) => setLoadErr(e.message)); }, []);
+  useEffect(() => {
+    call("GET", "/api/config").then((c) => {
+      setCfg(c);
+      const m = c.today.slice(0, 7);
+      getAvail(m).catch(() => {}); getAvail(addMonths(m, 1)).catch(() => {});
+    }).catch((e) => setLoadErr(e.message));
+  }, []);
 
   const go = (n) => { setDirStep(n > step ? 1 : -1); setStep(n); top.current?.scrollIntoView({ behavior: "smooth", block: "start" }); };
 
@@ -96,9 +106,9 @@ function StepPlan({ cfg, plan, onPick, onNext, dir }) {
     <div className="plans">${cfg.plans.map((p, i) => html`<${motion.button} key=${p.id} type="button" className="plan" aria-pressed=${plan?.id === p.id}
       onClick=${() => onPick(p)} whileHover=${hoverLift} whileTap=${tap}
       initial=${{ opacity: 0, y: 14 }} animate=${{ opacity: 1, y: 0, transition: { delay: 0.05 + i * 0.07, duration: 0.35, ease } }}>
-      <span className="times">${p.times}<small>回 / 月</small></span>
+      <span className="times"><small>ひと月</small>${p.times}<small>回まで</small></span>
       <span className="pname">${p.name}</span>
-      <span className="pdesc">${p.times === 1 ? "自分のペースで、じっくり1回" : `月に${p.times}回。前回の続きをすぐ進められます`}</span>
+      <span className="pdesc">${p.desc || `ひと月${p.times}回まで`}</span>
       <${AnimatePresence}>${plan?.id === p.id && html`<${motion.span} className="check" initial=${{ scale: 0 }} animate=${{ scale: 1 }} exit=${{ scale: 0 }} transition=${{ type: "spring", stiffness: 500, damping: 20 }} aria-hidden="true">✓</${motion.span}>`}</${AnimatePresence}>
     </${motion.button}>`)}</div>
     <div className="actions"><span></span><${Button} disabled=${!plan} onClick=${onNext}>日時をえらぶ</${Button}></div>
@@ -116,7 +126,7 @@ function StepDate({ cfg, plan, chosen, setChosen, onBack, onNext, dir }) {
 
   useEffect(() => {
     if (avail[month]) return;
-    call("GET", `/api/availability?month=${month}`).then((a) => setAvail((s) => ({ ...s, [month]: a }))).catch((e) => setErr(e.message));
+    getAvail(month).then((a) => setAvail((s) => ({ ...s, [month]: a }))).catch((e) => setErr(e.message));
   }, [month]);
 
   const changeMonth = (d) => { const m = addMonths(month, d); if (m < cfg.today.slice(0, 7) || m > last) return; setMdir(d); setMonth(m); setSelected(null); };
@@ -132,14 +142,15 @@ function StepDate({ cfg, plan, chosen, setChosen, onBack, onNext, dir }) {
     next = next.filter((c) => c.date !== day.date);
     if (next.length >= plan.times) {
       if (plan.times === 1) next = [];
-      else return setErr(`${plan.name}は${plan.times}回までです。入れ替えるときは、先に「はずす」を押してください。`);
+      else return setErr(`${plan.name}は、ひと月${plan.times}回までです。入れ替えるときは、先に「はずす」を押してください。`);
     }
     const slot = day.slots.find((s) => s.time === time);
     setChosen([...next, { date: day.date, time, end: slot.end }].sort((x, y) => (x.date + x.time).localeCompare(y.date + y.time)));
   };
   const left = plan.times - chosen.length;
+  const n = chosen.length;
 
-  return html`<${Panel} dir=${dir} title="日時をえらぶ" lead=${`${plan.name}：同じ月の中で${plan.times}回分の日時を選んでください。`}>
+  return html`<${Panel} dir=${dir} title="日時をえらぶ" lead=${`${plan.name}は、ひと月${plan.times}回まで予約できます。同じ月の中で、1回ずつでも、まとめてでも選べます（あとから追加もできます）。`}>
     <div className="cal-head">
       <${motion.button} className="icon-btn" type="button" aria-label="前の月" disabled=${month <= cfg.today.slice(0, 7)} onClick=${() => changeMonth(-1)} whileTap=${tap}>‹</${motion.button}>
       <h3 aria-live="polite">${monthLabel(month)}</h3>
@@ -153,7 +164,7 @@ function StepDate({ cfg, plan, chosen, setChosen, onBack, onNext, dir }) {
       <${Slots} day=${day} isChosen=${(t) => chosen.some((c) => c.date === day.date && c.time === t)} onToggle=${toggle} />
     </${motion.div}>`}</${AnimatePresence}>
     <div className="tray">
-      <div className="tray-title"><span>えらんだ日時</span><span>${chosen.length} / ${plan.times} 回</span></div>
+      <div className="tray-title"><span>えらんだ日時</span><span>${chosen.length} 回（ひと月${plan.times}回まで）</span></div>
       <ul><${AnimatePresence} initial=${false}>${chosen.map((c) => html`<${motion.li} key=${c.date + c.time} layout
         initial=${{ opacity: 0, height: 0 }} animate=${{ opacity: 1, height: "auto" }} exit=${{ opacity: 0, height: 0 }} transition=${{ duration: 0.22, ease }}>
         <span>${formatDateJa(c.date)} ${c.time}〜${c.end}</span>
@@ -163,7 +174,7 @@ function StepDate({ cfg, plan, chosen, setChosen, onBack, onNext, dir }) {
     <${ErrorBox} msg=${err} />
     <div className="actions">
       <${Button} kind="ghost" onClick=${onBack}>戻る</${Button}>
-      <${Button} disabled=${left !== 0} onClick=${onNext}>${left === 0 ? "次へ" : `あと${left}回分えらぶ`}</${Button}>
+      <${Button} disabled=${n === 0} onClick=${onNext}>${n === 0 ? "日時をえらんでください" : `${n}回分で次へ`}</${Button}>
     </div>
   </${Panel}>`;
 }
@@ -230,7 +241,7 @@ function StepConfirm({ cfg, plan, chosen, form, onBack, onDone, dir }) {
     try {
       const out = await call("POST", "/api/reservations", { plan: plan.id, lessons: chosen.map(({ date, time }) => ({ date, time })), ...form, agree: true });
       onDone(out);
-    } catch (e) { setErr(e.message); setBusy(false); }
+    } catch (e) { setErr(e.message); setBusy(false); if (e.code === "full") Object.keys(availCache).forEach((k) => delete availCache[k]); }
   };
   return html`<${Panel} dir=${dir} title="内容の確認" lead="この内容で予約します。">
     <dl className="summary">${rows.map(([k, v]) => html`<${React.Fragment} key=${k}><dt>${k}</dt><dd>${v}</dd></${React.Fragment}>`)}</dl>

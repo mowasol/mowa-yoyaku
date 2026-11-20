@@ -61,6 +61,7 @@ function DayCard({ d, data, settings, showC, reload, setErr }) {
   const ls = data.lessons.filter((l) => l.date === d.date && (showC || l.status === "active"));
   const nActive = data.lessons.filter((l) => l.date === d.date && l.status === "active").length;
   const times = [...new Set([...d.slots, ...ls.map((l) => l.time)])].sort();
+  const cap = d.capacity || data.capacity;
   return html`<article className=${`aday ${d.date === today ? "today" : ""}`}>
     <div className="aday-head"><h3>${formatDateJa(d.date)}${d.date === today ? "（今日）" : ""}</h3>
       <span className="meta">${d.open ? `${nActive}人 / ${d.slots.length}コマ` : `お休み（${d.reason}）`}</span></div>
@@ -68,8 +69,8 @@ function DayCard({ d, data, settings, showC, reload, setErr }) {
       const p = ls.filter((l) => l.time === t);
       const n = p.filter((l) => l.status === "active").length;
       return html`<div className="aslot" key=${t}>
-        <div className="time">${t}〜${endTime(t, settings, d.date)}<span className=${`cap ${n >= data.capacity ? "full" : ""}`}>${n} / ${data.capacity}人${n >= data.capacity ? " 満席" : ""}</span>
-          <div className="meter">${Array.from({ length: data.capacity }, (_, i) => html`<${motion.i} key=${i} className=${i < n ? "on" : ""} initial=${{ scaleX: 0 }} animate=${{ scaleX: 1 }} transition=${{ delay: i * 0.04 }} />`)}</div></div>
+        <div className="time">${t}〜${endTime(t, settings, d.date)}<span className=${`cap ${n >= cap ? "full" : ""}`}>${n} / ${cap}人${n >= cap ? " 満席" : ""}</span>
+          <div className="meter">${Array.from({ length: cap }, (_, i) => html`<${motion.i} key=${i} className=${i < n ? "on" : ""} initial=${{ scaleX: 0 }} animate=${{ scaleX: 1 }} transition=${{ delay: i * 0.04 }} />`)}</div></div>
         <div className="people">${p.length ? p.map((l) => html`<${Person} key=${l.id} l=${l} reload=${reload} setErr=${setErr} />`) : html`<span className="empty-slot">予約なし</span>`}</div>
       </div>`;
     }) : html`<div className="aslot"><span className="empty-slot">レッスンはありません</span></div>`}
@@ -105,7 +106,7 @@ function CalTab({ data, settings, nav, reload, setErr, onToday }) {
       ${Array.from({ length: first }, (_, i) => html`<div key=${"b" + i} className="bday blank"></div>`)}
       ${data.days.map((d, idx) => {
         const ls = data.lessons.filter((l) => l.date === d.date && l.status === "active");
-        const cap = d.slots.length * data.capacity;
+        const cap = d.slots.length * (d.capacity || data.capacity);
         const shown = ls.slice(0, 4);
         return html`<${motion.button} key=${d.date} type="button" className=${`bday ${d.open ? "" : "closed"} ${d.date === today ? "today" : ""}`}
           aria-pressed=${sel === d.date} onClick=${() => setSel(d.date)} whileHover=${{ y: -2 }} whileTap=${tap}
@@ -151,13 +152,14 @@ function ListTab({ data, settings, nav, reload, setErr, month }) {
 function DaysTab({ data, settings, nav, reload, setErr }) {
   const [edit, setEdit] = useState(null);
   const [note, setNote] = useState("");
+  const [dcap, setDcap] = useState("");
   const first = parseDate(data.days[0].date).dow;
   const d = edit && data.days.find((x) => x.date === edit);
   const ov = edit && data.overrides[edit];
   const base = edit && dayInfo(edit, settings, {});
   const n = edit ? data.lessons.filter((l) => l.date === edit && l.status === "active").length : 0;
-  const pick = (date) => { setEdit(date); setNote(data.overrides[date]?.note || ""); };
-  const save = async (open) => { try { await call("PUT", `/api/admin/overrides/${edit}`, { open, note }); reload(); } catch (e) { setErr(e.message); } };
+  const pick = (date) => { setEdit(date); setNote(data.overrides[date]?.note || ""); setDcap(data.overrides[date]?.capacity || ""); };
+  const save = async (open) => { try { await call("PUT", `/api/admin/overrides/${edit}`, { open, note, capacity: dcap === "" ? "" : Number(dcap) }); reload(); } catch (e) { setErr(e.message); } };
   const reset = async () => { try { await call("DELETE", `/api/admin/overrides/${edit}`); reload(); } catch (e) { setErr(e.message); } };
   return html`<section>
     <div className="toolbar">${nav}</div>
@@ -174,8 +176,11 @@ function DaysTab({ data, settings, nav, reload, setErr }) {
     <div className="legend"><span><b className="ok">営業</b> 通常どおり</span><span><b className="full">休</b> お休み</span><span>★ 個別に変更した日</span></div>
     <${AnimatePresence}>${d && html`<${motion.div} key=${edit} className="panel day-edit" ...${fadeUp}>
       <h3>${formatDateJa(edit)}</h3>
-      <p className="lead">いまの状態：${d.open ? "営業" : "お休み"}${ov ? "（個別に変更済み）" : ""}。通常は「${base.open ? "営業" : base.reason}」の日です。</p>
-      <div className="field"><label htmlFor="deNote">お知らせメモ（予約ページに表示）</label><input id="deNote" maxLength="40" placeholder="例：臨時休業／振替営業" value=${note} onChange=${(e) => setNote(e.target.value)} /></div>
+      <p className="lead">いまの状態：${d.open ? `営業（定員${d.capacity}人）` : "お休み"}${ov ? "（個別に変更済み）" : ""}。通常は「${base.open ? "営業" : base.reason}」の日です。</p>
+      <div className="row3">
+        <div className="field"><label htmlFor="deNote">お知らせメモ（予約ページに表示）</label><input id="deNote" maxLength="40" placeholder="例：臨時休業／振替営業" value=${note} onChange=${(e) => setNote(e.target.value)} /></div>
+        <div className="field"><label htmlFor="deCap">この日の定員（空欄なら通常の${settings.capacity}人）</label><input id="deCap" type="number" min="1" max="50" placeholder=${String(settings.capacity)} value=${dcap} onChange=${(e) => setDcap(e.target.value)} /><span className="hint">先生が少ない日は減らせます。「営業にする」で保存</span></div>
+      </div>
       <div className="actions">${ov ? html`<${Button} kind="ghost small" onClick=${reset}>通常に戻す</${Button}>` : html`<span></span>`}
         <span className="btn-row"><${Button} kind="danger small" onClick=${() => save(false)}>お休みにする</${Button}><${Button} kind="small" onClick=${() => save(true)}>営業にする</${Button}></span></div>
       ${n > 0 && d.open && html`<p className="lead">※ この日はすでに${n}件の予約があります。お休みにしても予約は自動で取り消されません。予約一覧から取消し、ご家庭へ連絡してください。</p>`}
@@ -233,7 +238,7 @@ function SettingsTab({ settings, onSaved }) {
     <div className="field"><label htmlFor="cn">ほかの時間の相談についての案内（予約ページに表示）</label><input id="cn" maxLength="200" value=${s.consultNote || ""} onChange=${(e) => up({ consultNote: e.target.value })} /></div>
     <div className="field"><label htmlFor="ce">相談先のメールアドレス</label><input id="ce" type="email" maxLength="120" value=${s.contactEmail || ""} onChange=${(e) => up({ contactEmail: e.target.value })} /></div>
     <div className="row3">
-      <div className="field"><label htmlFor="cp">1コマの定員（人）</label><input id="cp" type="number" min="1" max="50" value=${s.capacity} onChange=${num("capacity")} /></div>
+      <div className="field"><label htmlFor="cp">1コマの定員（人）※日ごとの変更は「営業日」タブ</label><input id="cp" type="number" min="1" max="50" value=${s.capacity} onChange=${num("capacity")} /></div>
       <div className="field"><label htmlFor="mp">同じ曜日は月に何回まで</label><select id="mp" value=${s.maxPerWeekdayPerMonth ? 4 : 0} onChange=${num("maxPerWeekdayPerMonth")}><option value="4">4回（第5週はお休み）</option><option value="0">制限なし</option></select></div>
     </div>
     <h2>予約の受付</h2>

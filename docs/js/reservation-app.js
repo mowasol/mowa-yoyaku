@@ -78,7 +78,7 @@ function View({ rv, onChange, onAdd, onCancel, err }) {
         <span className=${`tag ${l.status === "active" ? "on" : "off"}`}>${l.status === "active" ? "予約済み" : "キャンセル済み"}</span></span>
       ${l.canCancel && html`<span className="actions-inline"><${Button} kind="ghost small" onClick=${() => onChange(l.id)}>日時を変更</${Button}><${Button} kind="danger small" onClick=${() => onCancel(l)}>キャンセル</${Button}></span>`}
     </${motion.li}>`)}</ul>
-    ${left > 0 && html`<div className="actions"><span className="lead">この月はあと${left}回予約できます。</span><${Button} kind="small" onClick=${onAdd}>日時を追加する</${Button}></div>`}
+    ${left > 0 && html`<div className="actions"><span className="lead">この月はあと${left}回予約できます（${rv.planName}はひと月${rv.planTimes}回まで）。</span><${Button} kind="small" onClick=${onAdd}>日時を追加する</${Button}></div>`}
     <p className="lead">変更・キャンセルは、各レッスンの開始${rv.cancelHoursBefore}時間前までこの画面でできます。それ以降は教室へご連絡ください。</p>
     <${ErrorBox} msg=${err} />
   </${motion.section}>`;

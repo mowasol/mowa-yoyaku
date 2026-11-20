@@ -68,7 +68,7 @@ function seed() {
         for (let j = 0; j < fill; j++) {
           const [child, grade] = names[k++ % names.length];
           const id = `demo${k}`;
-          db.reservations.push({ id, token: (id + "0".repeat(48)).slice(0, 48), plan: k % 2 ? "m1" : "m2", month, child_name: child, grade,
+          db.reservations.push({ id, token: (id + "0".repeat(48)).slice(0, 48), plan: k % 2 ? "w1" : "bw", month, child_name: child, grade,
             parent_name: "見本 保護者", email: "sample@example.com", phone: "", note: "", created_at: new Date().toISOString() });
           db.lessons.push({ id: db.seq++, reservation_id: id, date, time, status: "active" });
         }
@@ -96,7 +96,7 @@ function demoStore() {
     },
     async createReservation(r, lessons, capacity) {
       const db = load();
-      for (const l of lessons) if (countOf(db, l.date, l.time) >= capacity) throw new ApiError(409, "タッチの差で満席になったコマがあります。別の日時を選び直してください", "full");
+      for (const l of lessons) if (countOf(db, l.date, l.time) >= (l.cap || capacity)) throw new ApiError(409, "タッチの差で満席になったコマがあります。別の日時を選び直してください", "full");
       db.reservations.push(r);
       for (const l of lessons) db.lessons.push({ id: db.seq++, reservation_id: r.id, date: l.date, time: l.time, status: "active" });
       save(db);
@@ -112,7 +112,7 @@ function demoStore() {
       const db = load();
       const old = oldId ? db.lessons.find((x) => x.id === oldId) : null;
       const sameSlot = old && old.date === l.date && old.time === l.time;
-      if (!sameSlot && countOf(db, l.date, l.time) >= capacity) throw new ApiError(409, "タッチの差で満席になりました。別の日時を選んでください", "full");
+      if (!sameSlot && countOf(db, l.date, l.time) >= (l.cap || capacity)) throw new ApiError(409, "タッチの差で満席になりました。別の日時を選んでください", "full");
       if (old) old.status = "cancelled";
       db.lessons.push({ id: db.seq++, reservation_id: rid, date: l.date, time: l.time, status: "active" });
       save(db);
