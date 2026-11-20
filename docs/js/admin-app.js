@@ -3,7 +3,8 @@
 import { createRoot } from "react-dom/client";
 import { MotionConfig } from "framer-motion";
 import { call, isDemo } from "./api.js";
-import { WEEKDAYS, parseDate, addMonths, nowJST, formatDateJa, dayInfo, slotTimes, endTime } from "./schedule.js";
+import { WEEKDAYS, parseDate, addMonths, nowJST, formatDateJa, dayInfo, endTime, toMin, toHHMM } from "./schedule.js";
+const addMin = (t, m) => toHHMM(Math.min(toMin(t) + m, 23 * 60 + 55));
 import { html, React, motion, AnimatePresence, ease, tap, fadeUp, monthLabel, ErrorBox, Button } from "./ui.js";
 
 const { useState, useEffect, useCallback } = React;
@@ -67,7 +68,7 @@ function DayCard({ d, data, settings, showC, reload, setErr }) {
       const p = ls.filter((l) => l.time === t);
       const n = p.filter((l) => l.status === "active").length;
       return html`<div className="aslot" key=${t}>
-        <div className="time">${t}〜${endTime(t, settings)}<span className=${`cap ${n >= data.capacity ? "full" : ""}`}>${n} / ${data.capacity}人${n >= data.capacity ? " 満席" : ""}</span>
+        <div className="time">${t}〜${endTime(t, settings, d.date)}<span className=${`cap ${n >= data.capacity ? "full" : ""}`}>${n} / ${data.capacity}人${n >= data.capacity ? " 満席" : ""}</span>
           <div className="meter">${Array.from({ length: data.capacity }, (_, i) => html`<${motion.i} key=${i} className=${i < n ? "on" : ""} initial=${{ scaleX: 0 }} animate=${{ scaleX: 1 }} transition=${{ delay: i * 0.04 }} />`)}</div></div>
         <div className="people">${p.length ? p.map((l) => html`<${Person} key=${l.id} l=${l} reload=${reload} setErr=${setErr} />`) : html`<span className="empty-slot">予約なし</span>`}</div>
       </div>`;
@@ -194,7 +195,6 @@ function SettingsTab({ settings, onSaved }) {
   const save = async (e) => {
     e.preventDefault(); setErr("");
     const out = structuredClone(s);
-    for (const i of Object.keys(out.weekly)) { const r = out.weekly[i]; if (!r.breakStart && !r.breakEnd) { delete r.breakStart; delete r.breakEnd; } }
     try { const r = await call("PUT", "/api/admin/settings", { settings: out }); onSaved(r.settings); setSaved(true); } catch (e2) { setErr(e2.message); }
   };
   const addAdmin = () => {
@@ -203,20 +203,36 @@ function SettingsTab({ settings, onSaved }) {
     setErr(""); if (!s.admins.includes(v)) up({ admins: [...s.admins, v] }); setAdminNew("");
   };
   return html`<form className="panel form" noValidate onSubmit=${save}>
-    <h2>営業時間</h2>
-    <p className="lead">レッスンのコマは、開始時刻から「1コマの長さ」ごとに自動で作られます。休憩時間にかかるコマは作られません。</p>
-    <div className="tbl-wrap"><table className="week-tbl"><thead><tr><th>曜日</th><th>営業</th><th>開始</th><th>終了</th><th>休憩 開始</th><th>休憩 終了</th><th>できるコマ</th></tr></thead>
-      <tbody>${[1, 2, 3, 4, 5, 6, 0].map((i) => {
-        const r = s.weekly[i];
-        const t = r.open && r.start && r.end ? slotTimes(r, s) : [];
-        const tm = (k) => html`<input type="time" step="300" value=${r[k] || ""} onChange=${(e) => upDay(i, { [k]: e.target.value })} aria-label=${`${WEEKDAYS[i]}曜日 ${k}`} />`;
-        return html`<tr key=${i} className=${r.open ? "" : "closed"}><td className="dw">${WEEKDAYS[i]}</td>
-          <td><input type="checkbox" checked=${r.open} onChange=${(e) => upDay(i, { open: e.target.checked })} aria-label=${`${WEEKDAYS[i]}曜日 営業`} /></td>
-          <td>${tm("start")}</td><td>${tm("end")}</td><td>${tm("breakStart")}</td><td>${tm("breakEnd")}</td>
-          <td className="slotsN">${r.open ? (t.length ? `${t.length}コマ：${t.join(" ")}` : "コマなし") : "お休み"}</td></tr>`;
-      })}</tbody></table></div>
+    <h2>曜日ごとのコマ</h2>
+    <p className="lead">1コマずつ開始・終了の時刻を入れます。コマごとに長さが違ってもかまいません。予約済みの回がある時刻を消しても、その予約は残ります。</p>
+    <div className="week-slots">${[1, 2, 3, 4, 5, 6, 0].map((i) => {
+      const r = s.weekly[i];
+      const slots = r.slots || [];
+      const setSlots = (next) => upDay(i, { slots: next });
+      const last = slots[slots.length - 1];
+      const addSlot = () => setSlots([...slots, last ? { start: last.end, end: addMin(last.end, 90) } : { start: "17:30", end: "19:00" }]);
+      return html`<div key=${i} className=${`wday ${r.open ? "" : "closed"}`}>
+        <div className="wday-head">
+          <span className="dw">${WEEKDAYS[i]}</span>
+          <label className="mini-check"><input type="checkbox" checked=${r.open} onChange=${(e) => upDay(i, { open: e.target.checked })} /> 営業</label>
+        </div>
+        ${r.open ? html`<ul className="slot-edit"><${AnimatePresence} initial=${false}>${slots.map((c, j) => html`<${motion.li} key=${j} layout initial=${{ opacity: 0, height: 0 }} animate=${{ opacity: 1, height: "auto" }} exit=${{ opacity: 0, height: 0 }}>
+            <span className="no">${j + 1}</span>
+            <input type="time" step="300" value=${c.start} aria-label=${`${WEEKDAYS[i]}曜 ${j + 1}コマ目 開始`} onChange=${(e) => setSlots(slots.map((x, k) => (k === j ? { ...x, start: e.target.value } : x)))} />
+            <span>〜</span>
+            <input type="time" step="300" value=${c.end} aria-label=${`${WEEKDAYS[i]}曜 ${j + 1}コマ目 終了`} onChange=${(e) => setSlots(slots.map((x, k) => (k === j ? { ...x, end: e.target.value } : x)))} />
+            <button type="button" className="del" aria-label=${`${j + 1}コマ目を消す`} onClick=${() => setSlots(slots.filter((_, k) => k !== j))}>×</button>
+          </${motion.li}>`)}</${AnimatePresence}></ul>
+          <button type="button" className="add-slot" onClick=${addSlot}>＋ コマを追加</button>` : html`<p className="lead">お休み</p>`}
+      </div>`;
+    })}</div>
+    <div className="btn-row copy-row">
+      <${Button} kind="ghost small" onClick=${() => up({ weekly: { ...s.weekly, ...Object.fromEntries([2, 3, 4, 5].map((d) => [d, structuredClone(s.weekly[1])])) } })}>月曜のコマを火〜金にコピー</${Button}>
+      <${Button} kind="ghost small" onClick=${() => up({ weekly: { ...s.weekly, 0: structuredClone(s.weekly[6]) } })}>土曜のコマを日曜にコピー</${Button}>
+    </div>
+    <div className="field"><label htmlFor="cn">ほかの時間の相談についての案内（予約ページに表示）</label><input id="cn" maxLength="200" value=${s.consultNote || ""} onChange=${(e) => up({ consultNote: e.target.value })} /></div>
+    <div className="field"><label htmlFor="ce">相談先のメールアドレス</label><input id="ce" type="email" maxLength="120" value=${s.contactEmail || ""} onChange=${(e) => up({ contactEmail: e.target.value })} /></div>
     <div className="row3">
-      <div className="field"><label htmlFor="lm">1コマの長さ（分）</label><input id="lm" type="number" min="15" max="240" step="5" value=${s.lessonMinutes} onChange=${num("lessonMinutes")} /></div>
       <div className="field"><label htmlFor="cp">1コマの定員（人）</label><input id="cp" type="number" min="1" max="50" value=${s.capacity} onChange=${num("capacity")} /></div>
       <div className="field"><label htmlFor="mp">同じ曜日は月に何回まで</label><select id="mp" value=${s.maxPerWeekdayPerMonth ? 4 : 0} onChange=${num("maxPerWeekdayPerMonth")}><option value="4">4回（第5週はお休み）</option><option value="0">制限なし</option></select></div>
     </div>

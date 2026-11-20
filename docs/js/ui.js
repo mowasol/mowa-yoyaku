@@ -2,7 +2,7 @@
 import React from "react";
 import htm from "htm";
 import { motion, AnimatePresence } from "framer-motion";
-import { WEEKDAYS, parseDate, slotTimes } from "./schedule.js";
+import { WEEKDAYS, parseDate, slotsOf } from "./schedule.js";
 
 export const html = htm.bind(React.createElement);
 export { React, motion, AnimatePresence };
@@ -62,15 +62,17 @@ export function Button({ kind = "", className = "", ...p }) {
 }
 
 // ---- 営業時間のまとめ ----
+// 同じコマ割りの曜日をまとめる → [{ label: "平日（月〜金）", slots: [{start,end}] }]
 export function hoursSummary(cfg) {
-  const trim0 = (t) => t.replace(/^0/, "");
   const groups = new Map();
   for (let d = 0; d < 7; d++) {
     const r = cfg.weekly[d];
     if (!r?.open) continue;
-    const key = `${trim0(r.start)}〜${trim0(r.end)}`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(d);
+    const slots = slotsOf(r, cfg);
+    if (!slots.length) continue;
+    const key = slots.map((s) => s.start + "-" + s.end).join(",");
+    if (!groups.has(key)) groups.set(key, { days: [], slots });
+    groups.get(key).days.push(d);
   }
   const label = (days) => {
     const s = days.join(",");
@@ -79,12 +81,13 @@ export function hoursSummary(cfg) {
     if (s === "0,1,2,3,4,5,6") return "毎日";
     return days.map((d) => WEEKDAYS[d]).join("・");
   };
-  return [...groups.entries()].sort((a, b) => (a[1].includes(0) ? 1 : 0) - (b[1].includes(0) ? 1 : 0)).map(([value, days]) => {
-    const r = cfg.weekly[days[0]];
-    const n = slotTimes(r, cfg).length;
-    return { label: label(days), value, sub: r.breakStart ? `休憩 ${trim0(r.breakStart)}〜${trim0(r.breakEnd)}・1日${n}コマ` : `1日${n}コマ` };
-  });
+  return [...groups.values()].sort((a, b) => (a.days.includes(0) ? 1 : 0) - (b.days.includes(0) ? 1 : 0))
+    .map((g) => ({ label: label(g.days), slots: g.slots }));
 }
+
+export const trim0 = (t) => String(t).replace(/^0/, "");
+const MARKS = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩", "⑪", "⑫"];
+export const slotMark = (i, n) => (n > 1 ? MARKS[i] || `${i + 1}.` : "");
 
 // ---- 予約用カレンダー ----
 export function dayState(day, today) {

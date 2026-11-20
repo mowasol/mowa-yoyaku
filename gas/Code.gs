@@ -175,7 +175,7 @@ function calendarSyncReservation(rid) {
     lessonRows().filter((l) => l.reservation_id === rid).forEach((l) => {
       if (l.status === "active" && !l.event_id && r) {
         const plan = settings.plans.find((p) => p.id === r.plan);
-        const ev = cal.createEvent(`${r.child_name}（${r.grade}）`, jstDate(l.date, l.time), jstDate(l.date, endTime(l.time, settings)),
+        const ev = cal.createEvent(`${r.child_name}（${r.grade}）`, jstDate(l.date, l.time), jstDate(l.date, endTime(l.time, settings, l.date)),
           { description: `${plan ? plan.name : r.plan}\n保護者：${r.parent_name}\n電話：${r.phone}\nご要望：${r.note}` });
         setCell("lessons", l._row, 7, ev.getId());
       } else if (l.status !== "active" && l.event_id) {
@@ -275,7 +275,7 @@ function dailyJob() {
     if (!r || r.anonymized === "1" || !r.email) return;
     try {
       MailApp.sendEmail({ to: r.email, name: settings.schoolName, replyTo: replyTo(), subject: `【${settings.schoolName}】明日のレッスンのお知らせ`,
-        body: `${r.parent_name} 様\n\n明日 ${formatDateJa(l.date)} ${l.time}〜${endTime(l.time, settings)} は、${r.child_name}さんのレッスンです。お待ちしています。\n\n予約の確認：${siteUrl()}/reservation.html#${r.token}\n\n${settings.schoolName}` });
+        body: `${r.parent_name} 様\n\n明日 ${formatDateJa(l.date)} ${l.time}〜${endTime(l.time, settings, l.date)} は、${r.child_name}さんのレッスンです。お待ちしています。\n\n予約の確認：${siteUrl()}/reservation.html#${r.token}\n\n${settings.schoolName}` });
       setCell("lessons", l._row, 6, "1");
     } catch (e) { console.error("reminder failed", e); }
   });

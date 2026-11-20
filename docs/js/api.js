@@ -7,7 +7,9 @@ import { monthDates, dayInfo, nowJST, addMonths } from "./schedule.js";
 import { API_URL } from "./config.js";
 
 let demoApi = null;
-export const mode = typeof google !== "undefined" && google.script?.run ? "admin" : API_URL ? "gas" : "demo";
+// アドレスに ?demo を付けると、本番が設定済みでもお試しモードで開ける
+const forceDemo = typeof location !== "undefined" && new URLSearchParams(location.search).has("demo");
+export const mode = forceDemo ? "demo" : typeof google !== "undefined" && google.script?.run ? "admin" : API_URL ? "gas" : "demo";
 if (mode === "demo") demoApi = createApi(demoStore(), {});
 
 export const isDemo = () => mode === "demo";

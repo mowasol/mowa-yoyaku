@@ -107,3 +107,20 @@
 .tab-pill { position: absolute; inset: 0; border-radius: 999px; border: var(--stroke); background: var(--leaf-wash); }
 .tab-t { position: relative; }
 .bday { min-height: 112px; }
+
+/* 曜日ごとのコマ編集 */
+.week-slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.wday { border: 1px solid var(--line); border-radius: 16px; padding: 10px 14px; background: var(--card); }
+.wday.closed { border-style: dashed; background: transparent; }
+.wday-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.wday-head .dw { font-family: var(--font-head); font-weight: 700; font-size: 1.15rem; }
+.slot-edit { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
+.slot-edit li { display: flex; align-items: center; gap: 6px; overflow: hidden; }
+.slot-edit .no { width: 22px; height: 22px; border-radius: 50%; background: var(--leaf-wash); display: grid; place-items: center; font-size: .75rem; font-weight: 700; flex: none; }
+.slot-edit input[type="time"] { border: 2px solid var(--line); border-radius: 8px; padding: 4px 6px; background: var(--card); font-variant-numeric: tabular-nums; min-width: 0; flex: 1 1 0; }
+.slot-edit .del { border: none; background: none; color: var(--bow); font-size: 1.1rem; font-weight: 700; cursor: pointer; width: 32px; height: 32px; flex: none; }
+.add-slot { margin-top: 8px; border: 2px dashed var(--line); background: none; border-radius: 10px; width: 100%; padding: 6px; font-weight: 700; color: var(--green); cursor: pointer; min-height: 40px; }
+.add-slot:hover { border-color: var(--green); }
+.copy-row { margin-top: 4px; }
+.week-slots { grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr)); }
+.slot-edit input[type="time"] { flex: 1 1 110px; min-width: 104px; font-size: 15px; }

@@ -14,8 +14,15 @@ const bad = (msg, code = "bad_request") => new ApiError(400, msg, code);
 export function mergeSettings(saved) {
   const s = { ...DEFAULT_SETTINGS, ...(saved || {}) };
   s.weekly = { ...DEFAULT_SETTINGS.weekly, ...(saved?.weekly || {}) };
+  // 旧方式（営業時間＋1コマの長さ）で保存された曜日は、新しい標準のコマ割りに置きかえる
+  for (const d of Object.keys(s.weekly)) {
+    const r = s.weekly[d];
+    if (r && !Array.isArray(r.slots)) s.weekly[d] = structuredCloneSafe(DEFAULT_SETTINGS.weekly[d] || { open: false, slots: [] });
+  }
   return s;
 }
+
+const structuredCloneSafe = (v) => JSON.parse(JSON.stringify(v));
 
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const DATE_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
@@ -51,7 +58,7 @@ export function createApi(store, opts = {}) {
         date, open: info.open, reason: info.reason,
         slots: info.slots.map((time) => {
           const remaining = Math.max(0, settings.capacity - (counts[`${date} ${time}`] || 0));
-          return { time, end: endTime(time, settings), remaining, bookable: remaining > 0 && isBookable(date, time, settings, t) };
+          return { time, end: endTime(time, settings, date), remaining, bookable: remaining > 0 && isBookable(date, time, settings, t) };
         }),
       };
     });
@@ -76,7 +83,7 @@ export function createApi(store, opts = {}) {
       parentName: res.parent_name, email: res.email, phone: res.phone, note: res.note,
       createdAt: res.created_at,
       lessons: lessons.map((l) => ({
-        id: l.id, date: l.date, time: l.time, end: endTime(l.time, settings), status: l.status,
+        id: l.id, date: l.date, time: l.time, end: endTime(l.time, settings, l.date), status: l.status,
         canCancel: l.status === "active" && canCancel(l.date, l.time, settings, t),
       })),
       cancelHoursBefore: settings.cancelHoursBefore,
@@ -172,7 +179,7 @@ export function createApi(store, opts = {}) {
     return {
       month, capacity: settings.capacity, days,
       lessons: rows.map((r) => ({
-        id: r.id, date: r.date, time: r.time, end: endTime(r.time, settings), status: r.status,
+        id: r.id, date: r.date, time: r.time, end: endTime(r.time, settings, r.date), status: r.status,
         plan: settings.plans.find((p) => p.id === r.plan)?.name || r.plan,
         childName: r.child_name, grade: r.grade, parentName: r.parent_name,
         email: r.email, phone: r.phone, note: r.note, reservationId: r.reservation_id,
@@ -200,6 +207,7 @@ export function createApi(store, opts = {}) {
       return {
         schoolName: s.schoolName, plans: s.plans, lessonMinutes: s.lessonMinutes, capacity: s.capacity,
         weekly: s.weekly, maxPerWeekdayPerMonth: s.maxPerWeekdayPerMonth, notice: s.notice,
+        consultNote: s.consultNote, contactEmail: s.contactEmail,
         bookingCloseHoursBefore: s.bookingCloseHoursBefore, cancelHoursBefore: s.cancelHoursBefore,
         bookingOpenDaysAhead: s.bookingOpenDaysAhead,
         today: date, turnstileSiteKey: opts.turnstileSiteKey || "", grades: GRADES,
@@ -226,6 +234,12 @@ export function createApi(store, opts = {}) {
         s.maxPerWeekdayPerMonth = Number(s.maxPerWeekdayPerMonth) || 0;
         s.bookingOpenDaysAhead = Number(s.bookingOpenDaysAhead); s.bookingCloseHoursBefore = Number(s.bookingCloseHoursBefore);
         s.cancelHoursBefore = Number(s.cancelHoursBefore);
+        s.consultNote = String(s.consultNote || "").slice(0, 200);
+        s.contactEmail = String(s.contactEmail || "").trim().slice(0, 120);
+        for (const d of Object.keys(s.weekly)) {
+          const r = s.weekly[d];
+          s.weekly[d] = { open: !!r.open, slots: (r.slots || []).map((c) => ({ start: c.start, end: c.end })).sort((a, b) => String(a.start).localeCompare(String(b.start))) };
+        }
         const err = validateSettings(s);
         if (err) throw bad(err);
         await store.saveSettings(s);

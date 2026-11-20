@@ -5,6 +5,16 @@ export const WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"];
 
 export const GRADES = ["年長", "小1", "小2", "小3", "小4", "小5", "小6", "中1", "中2", "中3", "高校生", "その他"];
 
+// 土日のコマ（①9:00〜10:30 ②11:00〜12:30 ③14:00〜15:30 ④16:00〜17:00）
+function WEEKEND_SLOTS() {
+  return [
+    { start: "09:00", end: "10:30" },
+    { start: "11:00", end: "12:30" },
+    { start: "14:00", end: "15:30" },
+    { start: "16:00", end: "17:00" },
+  ];
+}
+
 export const DEFAULT_SETTINGS = {
   schoolName: "mowaプログラミング教室",
   // コース（内容はお子さまごとに個別。回数だけが違う）
@@ -12,18 +22,21 @@ export const DEFAULT_SETTINGS = {
     { id: "m1", name: "月1回コース", times: 1 },
     { id: "m2", name: "月2回コース", times: 2 },
   ],
-  lessonMinutes: 60,   // 1コマの長さ
+  lessonMinutes: 60,   // （旧方式の予備）コマの時刻が決まっていない曜日で使う1コマの長さ
   capacity: 4,         // 1コマの定員
-  // 曜日ごとの営業時間（0=日 ... 6=土）。break は休憩時間（任意）
+  // 曜日ごとのコマ（0=日 ... 6=土）。slots に開始・終了を1コマずつ書く
   weekly: {
-    0: { open: true, start: "09:00", end: "17:30", breakStart: "12:00", breakEnd: "13:00" },
-    1: { open: true, start: "17:00", end: "19:00" },
-    2: { open: true, start: "17:00", end: "19:00" },
-    3: { open: true, start: "17:00", end: "19:00" },
-    4: { open: true, start: "17:00", end: "19:00" },
-    5: { open: true, start: "17:00", end: "19:00" },
-    6: { open: true, start: "09:00", end: "17:30", breakStart: "12:00", breakEnd: "13:00" },
+    0: { open: true, slots: WEEKEND_SLOTS() },
+    1: { open: true, slots: [{ start: "17:30", end: "19:00" }] },
+    2: { open: true, slots: [{ start: "17:30", end: "19:00" }] },
+    3: { open: true, slots: [{ start: "17:30", end: "19:00" }] },
+    4: { open: true, slots: [{ start: "17:30", end: "19:00" }] },
+    5: { open: true, slots: [{ start: "17:30", end: "19:00" }] },
+    6: { open: true, slots: WEEKEND_SLOTS() },
   },
+  // 予約ページに出す「ほかの時間の相談」の案内（空なら非表示）
+  consultNote: "上記以外の時間をご希望の場合は、お気軽にご相談ください。",
+  contactEmail: "school@mowasol.com",
   // 同じ曜日は月4回まで。5回目（第5週）はお休み。0 にすると制限なし
   maxPerWeekdayPerMonth: 4,
   bookingOpenDaysAhead: 62,    // 何日先まで予約できるか
@@ -93,8 +106,21 @@ export function dayInfo(dateStr, settings, overrides = {}) {
   return { date: dateStr, dow, open, reason, slots: open ? slotTimes(rule, settings) : [] };
 }
 
-// 営業時間からコマの開始時刻を作る
+// その曜日のコマ一覧 [{start, end}]（時刻を個別に決めた slots を優先。無ければ営業時間から作る）
+export function slotsOf(rule, settings) {
+  if (!rule) return [];
+  if (Array.isArray(rule.slots)) return rule.slots.filter((s) => s && s.start && s.end).slice().sort((a, b) => a.start.localeCompare(b.start));
+  const len = Number(settings.lessonMinutes) || 60;
+  return legacySlotTimes(rule, settings).map((t) => ({ start: t, end: toHHMM(toMin(t) + len) }));
+}
+
+// コマの開始時刻の一覧
 export function slotTimes(rule, settings) {
+  return slotsOf(rule, settings).map((s) => s.start);
+}
+
+// 旧方式：営業時間を「1コマの長さ」で区切る
+function legacySlotTimes(rule, settings) {
   if (!rule || !rule.start || !rule.end) return [];
   const len = Number(settings.lessonMinutes) || 60;
   const s = toMin(rule.start), e = toMin(rule.end);
@@ -122,7 +148,12 @@ export function canCancel(dateStr, hhmm, settings, nowMs = Date.now()) {
   return jstToMs(dateStr, hhmm) - nowMs >= (Number(settings.cancelHoursBefore) || 0) * 3600000;
 }
 
-export function endTime(hhmm, settings) {
+// コマの終了時刻。日付が分かればその曜日のコマ表から引く（コマごとに長さが違うため）
+export function endTime(hhmm, settings, dateStr) {
+  if (dateStr) {
+    const hit = slotsOf(settings.weekly[parseDate(dateStr).dow], settings).find((s) => s.start === hhmm);
+    if (hit) return hit.end;
+  }
   return toHHMM(toMin(hhmm) + (Number(settings.lessonMinutes) || 60));
 }
 
@@ -136,15 +167,19 @@ export function validateSettings(s) {
   const hhmm = /^([01]\d|2[0-3]):[0-5]\d$/;
   if (!Array.isArray(s.plans) || !s.plans.length) return "コースが設定されていません";
   for (const p of s.plans) if (!p.id || !p.name || !(p.times >= 1 && p.times <= 8)) return "コースの設定が正しくありません";
-  if (!(s.lessonMinutes >= 15 && s.lessonMinutes <= 240)) return "1コマの長さは15〜240分にしてください";
   if (!(s.capacity >= 1 && s.capacity <= 50)) return "定員は1〜50人にしてください";
   if (!Array.isArray(s.admins) || s.admins.length > 30 || s.admins.some((a) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a))) return "管理者のメールアドレスを確認してください";
   for (let i = 0; i < 7; i++) {
     const r = s.weekly?.[i];
     if (!r) return `${WEEKDAYS[i]}曜日の設定がありません`;
-    if (r.open) {
-      if (!hhmm.test(r.start) || !hhmm.test(r.end) || toMin(r.start) >= toMin(r.end)) return `${WEEKDAYS[i]}曜日の開始・終了時刻を確認してください`;
-      if ((r.breakStart || r.breakEnd) && !(hhmm.test(r.breakStart || "") && hhmm.test(r.breakEnd || "") && toMin(r.breakStart) < toMin(r.breakEnd))) return `${WEEKDAYS[i]}曜日の休憩時間を確認してください`;
+    if (!r.open) continue;
+    if (!Array.isArray(r.slots) || !r.slots.length) return `${WEEKDAYS[i]}曜日のコマを1つ以上入れてください（休みなら「営業」を外す）`;
+    if (r.slots.length > 12) return `${WEEKDAYS[i]}曜日のコマは12個までです`;
+    const sorted = r.slots.slice().sort((a, b) => String(a.start).localeCompare(String(b.start)));
+    for (let k = 0; k < sorted.length; k++) {
+      const c = sorted[k];
+      if (!hhmm.test(c.start || "") || !hhmm.test(c.end || "") || toMin(c.start) >= toMin(c.end)) return `${WEEKDAYS[i]}曜日のコマの開始・終了時刻を確認してください`;
+      if (k > 0 && toMin(c.start) < toMin(sorted[k - 1].end)) return `${WEEKDAYS[i]}曜日のコマの時間が重なっています`;
     }
   }
   return null;

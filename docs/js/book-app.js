@@ -5,7 +5,7 @@ import { call, isDemo, resetDemo } from "./api.js";
 import { addMonths, addDays, formatDateJa } from "./schedule.js";
 import {
   html, React, motion, AnimatePresence, ease, tap, hoverLift, fadeUp, monthLabel, storage, copyText,
-  Header, Footer, DemoBar, ErrorBox, Button, hoursSummary, Calendar, Legend, Slots,
+  Header, Footer, DemoBar, ErrorBox, Button, hoursSummary, trim0, slotMark, Calendar, Legend, Slots,
 } from "./ui.js";
 
 const { useState, useEffect, useRef } = React;
@@ -60,8 +60,13 @@ function Intro({ cfg }) {
       レッスンの日時を<span className="mark"><${motion.span} className="mark-bg" initial=${{ scaleX: 0 }} animate=${{ scaleX: 1 }} transition=${{ delay: 0.35, duration: 0.5, ease }} />えらんで予約</span>
     </${motion.h1}>
     <${motion.p} ...${fadeUp} transition=${{ delay: 0.1 }}>コースは月1回と月2回の2つです。レッスンの内容は、お子さま一人ひとりに合わせて決めます。</${motion.p}>
-    <dl className="hours">${hoursSummary(cfg).map((h, i) => html`<${motion.div} key=${h.label} initial=${{ opacity: 0, y: 10 }} animate=${{ opacity: 1, y: 0 }} transition=${{ delay: 0.15 + i * 0.06, duration: 0.35, ease }}>
-      <dt>${h.label}</dt><dd>${h.value}</dd><dt className="sub">${h.sub}</dt></${motion.div}>`)}</dl>
+    <div className="hours">${hoursSummary(cfg).map((h, i) => html`<${motion.div} key=${h.label} className="hours-card" initial=${{ opacity: 0, y: 10 }} animate=${{ opacity: 1, y: 0 }} transition=${{ delay: 0.15 + i * 0.06, duration: 0.35, ease }}>
+      <div className="hours-label">${h.label}<span>${h.slots.length}コマ</span></div>
+      <ul className="hours-slots">${h.slots.map((s, j) => html`<li key=${s.start}><span className="mk">${slotMark(j, h.slots.length)}</span>${trim0(s.start)}〜${trim0(s.end)}</li>`)}</ul>
+    </${motion.div}>`)}</div>
+    ${cfg.consultNote && html`<${motion.p} className="consult" ...${fadeUp} transition=${{ delay: 0.3 }}>
+      ${cfg.consultNote}${cfg.contactEmail && html`<span className="consult-mail">ご相談先：<a href=${`mailto:${cfg.contactEmail}`}>${cfg.contactEmail}</a></span>`}
+    </${motion.p}>`}
     ${notes.length > 0 && html`<div className="notice">${notes.map((n, i) => html`<div key=${i}>${n}</div>`)}</div>`}
   </section>`;
 }

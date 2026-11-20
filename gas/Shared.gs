@@ -8,6 +8,16 @@ const WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"];
 
 const GRADES = ["年長", "小1", "小2", "小3", "小4", "小5", "小6", "中1", "中2", "中3", "高校生", "その他"];
 
+// 土日のコマ（①9:00〜10:30 ②11:00〜12:30 ③14:00〜15:30 ④16:00〜17:00）
+function WEEKEND_SLOTS() {
+  return [
+    { start: "09:00", end: "10:30" },
+    { start: "11:00", end: "12:30" },
+    { start: "14:00", end: "15:30" },
+    { start: "16:00", end: "17:00" },
+  ];
+}
+
 const DEFAULT_SETTINGS = {
   schoolName: "mowaプログラミング教室",
   // コース（内容はお子さまごとに個別。回数だけが違う）
@@ -15,18 +25,21 @@ const DEFAULT_SETTINGS = {
     { id: "m1", name: "月1回コース", times: 1 },
     { id: "m2", name: "月2回コース", times: 2 },
   ],
-  lessonMinutes: 60,   // 1コマの長さ
+  lessonMinutes: 60,   // （旧方式の予備）コマの時刻が決まっていない曜日で使う1コマの長さ
   capacity: 4,         // 1コマの定員
-  // 曜日ごとの営業時間（0=日 ... 6=土）。break は休憩時間（任意）
+  // 曜日ごとのコマ（0=日 ... 6=土）。slots に開始・終了を1コマずつ書く
   weekly: {
-    0: { open: true, start: "09:00", end: "17:30", breakStart: "12:00", breakEnd: "13:00" },
-    1: { open: true, start: "17:00", end: "19:00" },
-    2: { open: true, start: "17:00", end: "19:00" },
-    3: { open: true, start: "17:00", end: "19:00" },
-    4: { open: true, start: "17:00", end: "19:00" },
-    5: { open: true, start: "17:00", end: "19:00" },
-    6: { open: true, start: "09:00", end: "17:30", breakStart: "12:00", breakEnd: "13:00" },
+    0: { open: true, slots: WEEKEND_SLOTS() },
+    1: { open: true, slots: [{ start: "17:30", end: "19:00" }] },
+    2: { open: true, slots: [{ start: "17:30", end: "19:00" }] },
+    3: { open: true, slots: [{ start: "17:30", end: "19:00" }] },
+    4: { open: true, slots: [{ start: "17:30", end: "19:00" }] },
+    5: { open: true, slots: [{ start: "17:30", end: "19:00" }] },
+    6: { open: true, slots: WEEKEND_SLOTS() },
   },
+  // 予約ページに出す「ほかの時間の相談」の案内（空なら非表示）
+  consultNote: "上記以外の時間をご希望の場合は、お気軽にご相談ください。",
+  contactEmail: "school@mowasol.com",
   // 同じ曜日は月4回まで。5回目（第5週）はお休み。0 にすると制限なし
   maxPerWeekdayPerMonth: 4,
   bookingOpenDaysAhead: 62,    // 何日先まで予約できるか
@@ -96,8 +109,21 @@ function dayInfo(dateStr, settings, overrides = {}) {
   return { date: dateStr, dow, open, reason, slots: open ? slotTimes(rule, settings) : [] };
 }
 
-// 営業時間からコマの開始時刻を作る
+// その曜日のコマ一覧 [{start, end}]（時刻を個別に決めた slots を優先。無ければ営業時間から作る）
+function slotsOf(rule, settings) {
+  if (!rule) return [];
+  if (Array.isArray(rule.slots)) return rule.slots.filter((s) => s && s.start && s.end).slice().sort((a, b) => a.start.localeCompare(b.start));
+  const len = Number(settings.lessonMinutes) || 60;
+  return legacySlotTimes(rule, settings).map((t) => ({ start: t, end: toHHMM(toMin(t) + len) }));
+}
+
+// コマの開始時刻の一覧
 function slotTimes(rule, settings) {
+  return slotsOf(rule, settings).map((s) => s.start);
+}
+
+// 旧方式：営業時間を「1コマの長さ」で区切る
+function legacySlotTimes(rule, settings) {
   if (!rule || !rule.start || !rule.end) return [];
   const len = Number(settings.lessonMinutes) || 60;
   const s = toMin(rule.start), e = toMin(rule.end);
@@ -125,7 +151,12 @@ function canCancel(dateStr, hhmm, settings, nowMs = Date.now()) {
   return jstToMs(dateStr, hhmm) - nowMs >= (Number(settings.cancelHoursBefore) || 0) * 3600000;
 }
 
-function endTime(hhmm, settings) {
+// コマの終了時刻。日付が分かればその曜日のコマ表から引く（コマごとに長さが違うため）
+function endTime(hhmm, settings, dateStr) {
+  if (dateStr) {
+    const hit = slotsOf(settings.weekly[parseDate(dateStr).dow], settings).find((s) => s.start === hhmm);
+    if (hit) return hit.end;
+  }
   return toHHMM(toMin(hhmm) + (Number(settings.lessonMinutes) || 60));
 }
 
@@ -139,15 +170,19 @@ function validateSettings(s) {
   const hhmm = /^([01]\d|2[0-3]):[0-5]\d$/;
   if (!Array.isArray(s.plans) || !s.plans.length) return "コースが設定されていません";
   for (const p of s.plans) if (!p.id || !p.name || !(p.times >= 1 && p.times <= 8)) return "コースの設定が正しくありません";
-  if (!(s.lessonMinutes >= 15 && s.lessonMinutes <= 240)) return "1コマの長さは15〜240分にしてください";
   if (!(s.capacity >= 1 && s.capacity <= 50)) return "定員は1〜50人にしてください";
   if (!Array.isArray(s.admins) || s.admins.length > 30 || s.admins.some((a) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a))) return "管理者のメールアドレスを確認してください";
   for (let i = 0; i < 7; i++) {
     const r = s.weekly?.[i];
     if (!r) return `${WEEKDAYS[i]}曜日の設定がありません`;
-    if (r.open) {
-      if (!hhmm.test(r.start) || !hhmm.test(r.end) || toMin(r.start) >= toMin(r.end)) return `${WEEKDAYS[i]}曜日の開始・終了時刻を確認してください`;
-      if ((r.breakStart || r.breakEnd) && !(hhmm.test(r.breakStart || "") && hhmm.test(r.breakEnd || "") && toMin(r.breakStart) < toMin(r.breakEnd))) return `${WEEKDAYS[i]}曜日の休憩時間を確認してください`;
+    if (!r.open) continue;
+    if (!Array.isArray(r.slots) || !r.slots.length) return `${WEEKDAYS[i]}曜日のコマを1つ以上入れてください（休みなら「営業」を外す）`;
+    if (r.slots.length > 12) return `${WEEKDAYS[i]}曜日のコマは12個までです`;
+    const sorted = r.slots.slice().sort((a, b) => String(a.start).localeCompare(String(b.start)));
+    for (let k = 0; k < sorted.length; k++) {
+      const c = sorted[k];
+      if (!hhmm.test(c.start || "") || !hhmm.test(c.end || "") || toMin(c.start) >= toMin(c.end)) return `${WEEKDAYS[i]}曜日のコマの開始・終了時刻を確認してください`;
+      if (k > 0 && toMin(c.start) < toMin(sorted[k - 1].end)) return `${WEEKDAYS[i]}曜日のコマの時間が重なっています`;
     }
   }
   return null;
@@ -166,8 +201,15 @@ const bad = (msg, code = "bad_request") => new ApiError(400, msg, code);
 function mergeSettings(saved) {
   const s = { ...DEFAULT_SETTINGS, ...(saved || {}) };
   s.weekly = { ...DEFAULT_SETTINGS.weekly, ...(saved?.weekly || {}) };
+  // 旧方式（営業時間＋1コマの長さ）で保存された曜日は、新しい標準のコマ割りに置きかえる
+  for (const d of Object.keys(s.weekly)) {
+    const r = s.weekly[d];
+    if (r && !Array.isArray(r.slots)) s.weekly[d] = structuredCloneSafe(DEFAULT_SETTINGS.weekly[d] || { open: false, slots: [] });
+  }
   return s;
 }
+
+const structuredCloneSafe = (v) => JSON.parse(JSON.stringify(v));
 
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const DATE_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
@@ -203,7 +245,7 @@ function createApi(store, opts = {}) {
         date, open: info.open, reason: info.reason,
         slots: info.slots.map((time) => {
           const remaining = Math.max(0, settings.capacity - (counts[`${date} ${time}`] || 0));
-          return { time, end: endTime(time, settings), remaining, bookable: remaining > 0 && isBookable(date, time, settings, t) };
+          return { time, end: endTime(time, settings, date), remaining, bookable: remaining > 0 && isBookable(date, time, settings, t) };
         }),
       };
     });
@@ -228,7 +270,7 @@ function createApi(store, opts = {}) {
       parentName: res.parent_name, email: res.email, phone: res.phone, note: res.note,
       createdAt: res.created_at,
       lessons: lessons.map((l) => ({
-        id: l.id, date: l.date, time: l.time, end: endTime(l.time, settings), status: l.status,
+        id: l.id, date: l.date, time: l.time, end: endTime(l.time, settings, l.date), status: l.status,
         canCancel: l.status === "active" && canCancel(l.date, l.time, settings, t),
       })),
       cancelHoursBefore: settings.cancelHoursBefore,
@@ -324,7 +366,7 @@ function createApi(store, opts = {}) {
     return {
       month, capacity: settings.capacity, days,
       lessons: rows.map((r) => ({
-        id: r.id, date: r.date, time: r.time, end: endTime(r.time, settings), status: r.status,
+        id: r.id, date: r.date, time: r.time, end: endTime(r.time, settings, r.date), status: r.status,
         plan: settings.plans.find((p) => p.id === r.plan)?.name || r.plan,
         childName: r.child_name, grade: r.grade, parentName: r.parent_name,
         email: r.email, phone: r.phone, note: r.note, reservationId: r.reservation_id,
@@ -352,6 +394,7 @@ function createApi(store, opts = {}) {
       return {
         schoolName: s.schoolName, plans: s.plans, lessonMinutes: s.lessonMinutes, capacity: s.capacity,
         weekly: s.weekly, maxPerWeekdayPerMonth: s.maxPerWeekdayPerMonth, notice: s.notice,
+        consultNote: s.consultNote, contactEmail: s.contactEmail,
         bookingCloseHoursBefore: s.bookingCloseHoursBefore, cancelHoursBefore: s.cancelHoursBefore,
         bookingOpenDaysAhead: s.bookingOpenDaysAhead,
         today: date, turnstileSiteKey: opts.turnstileSiteKey || "", grades: GRADES,
@@ -378,6 +421,12 @@ function createApi(store, opts = {}) {
         s.maxPerWeekdayPerMonth = Number(s.maxPerWeekdayPerMonth) || 0;
         s.bookingOpenDaysAhead = Number(s.bookingOpenDaysAhead); s.bookingCloseHoursBefore = Number(s.bookingCloseHoursBefore);
         s.cancelHoursBefore = Number(s.cancelHoursBefore);
+        s.consultNote = String(s.consultNote || "").slice(0, 200);
+        s.contactEmail = String(s.contactEmail || "").trim().slice(0, 120);
+        for (const d of Object.keys(s.weekly)) {
+          const r = s.weekly[d];
+          s.weekly[d] = { open: !!r.open, slots: (r.slots || []).map((c) => ({ start: c.start, end: c.end })).sort((a, b) => String(a.start).localeCompare(String(b.start))) };
+        }
         const err = validateSettings(s);
         if (err) throw bad(err);
         store.saveSettings(s);
