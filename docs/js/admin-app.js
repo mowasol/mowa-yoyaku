@@ -295,6 +295,14 @@ function SettingsTab({ settings, onSaved }) {
     <h2>コースと表示</h2>
     <div className="row3">${s.plans.map((p, i) => html`<div className="field" key=${p.id}><label htmlFor=${"pl" + i}>コース名（月${p.times}回）</label>
       <input id=${"pl" + i} maxLength="20" value=${p.name} onChange=${(e) => up({ plans: s.plans.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })} /></div>`)}</div>
+    <h2>教室への通知</h2>
+    <div className="field"><label htmlFor="nm">予約・変更・キャンセルの通知（school@ あて）</label>
+      <select id="nm" value=${s.notifyMode || "smart"} onChange=${(e) => up({ notifyMode: e.target.value })}>
+        <option value="smart">当日・翌日分はすぐ、ほかは毎朝9時にまとめて1通（おすすめ）</option>
+        <option value="each">すべてすぐに送る</option>
+        <option value="digest">毎朝9時にまとめて1通だけ</option>
+        <option value="off">送らない（管理画面で確認する）</option>
+      </select><span className="hint">保護者への確認メールは、この設定に関係なくすぐ届きます</span></div>
     <div className="field"><label htmlFor="sn">教室名</label><input id="sn" maxLength="40" value=${s.schoolName} onChange=${(e) => up({ schoolName: e.target.value })} /></div>
     <div className="field"><label htmlFor="nt">お知らせ（予約ページの上に表示。空なら非表示）</label><textarea id="nt" maxLength="300" placeholder="例：12月29日〜1月3日は冬休みです" value=${s.notice || ""} onChange=${(e) => up({ notice: e.target.value })}></textarea></div>
     <h2>管理者</h2>

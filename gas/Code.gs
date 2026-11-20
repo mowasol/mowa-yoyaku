@@ -18,6 +18,7 @@ const SHEETS = {
   overrides: { name: "休業日", head: ["日付", "営業(1/0)", "メモ", "その日の定員"] },
   reservations: { name: "予約", head: ["id", "token", "コース", "月", "お子さま", "学年", "保護者", "メール", "電話", "ご要望", "受付日時", "匿名化"] },
   lessons: { name: "レッスン", head: ["id", "予約id", "日付", "時刻", "状態", "前日通知", "カレンダー予定ID"] },
+  digest: { name: "通知まとめ", head: ["日時", "種類", "内容", "送信済み"] },
 };
 const RES_COLS = ["id", "token", "plan", "month", "child_name", "grade", "parent_name", "email", "phone", "note", "created_at", "anonymized"];
 const LES_COLS = ["id", "reservation_id", "date", "time", "status", "reminded", "event_id"];
@@ -64,7 +65,17 @@ function setup() {
 }
 
 // ---------- シートの読み書き ----------
-function sheet(k) { return SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS[k].name); }
+function sheet(k) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sh = ss.getSheetByName(SHEETS[k].name);
+  if (!sh) { // 後から追加したシートは、初めて使うときに作る
+    sh = ss.insertSheet(SHEETS[k].name);
+    sh.getRange(1, 1, 1, SHEETS[k].head.length).setValues([SHEETS[k].head]).setFontWeight("bold").setBackground("#e6f8dc");
+    sh.setFrozenRows(1);
+    sh.getRange("A:Z").setNumberFormat("@");
+  }
+  return sh;
+}
 // 1回の処理の中では、同じシートを何度も読まないよう覚えておく（書き込んだら忘れる）
 let MEMO = {};
 function rows(k, cols) {
@@ -248,9 +259,58 @@ function notify(kind, d) {
   const body = `${rv.parentName} 様\n\n${school}です。${title}。\n\n■ コース：${rv.planName}\n■ お子さま：${rv.childName}（${rv.grade}）\n■ 予約中の日時\n${lessonLines(rv)}\n\n予約の確認・変更・キャンセルはこちら（開始${settings.cancelHoursBefore}時間前まで）：\n${link}\n\nこのリンクはご家庭専用です。他の方に共有しないでください。\n\n${school}`;
   try {
     MailApp.sendEmail({ to: rv.email, subject: `【${school}】${title}`, body, name: school, replyTo: replyTo() });
-    const admin = props().getProperty("ADMIN_NOTIFY_EMAIL");
-    if (admin) MailApp.sendEmail({ to: admin, subject: `[予約${{ created: "新規", cancelled: "キャンセル", changed: "変更" }[kind]}] ${rv.childName}（${rv.grade}）`, body: `${rv.planName}\n${lessonLines(rv)}\n保護者：${rv.parentName}\nメール：${rv.email}\n電話：${rv.phone}\nご要望：${rv.note}`, name: school });
   } catch (e) { console.error("mail failed", e); }
+  try { notifyAdmin(kind, d); } catch (e) { console.error("admin notify failed", e); }
+}
+
+// ---------- 教室への通知（件数が多くても困らないように振り分ける） ----------
+const KIND_JA = { created: "新規", cancelled: "キャンセル", changed: "変更" };
+
+// その操作で関わる日付（当日・翌日のものがあれば「急ぎ」）
+function touchedDates(kind, d) {
+  const dates = [];
+  if (kind === "created") d.reservation.lessons.filter((l) => l.status === "active").forEach((l) => dates.push(l.date));
+  if (kind === "cancelled" && d.lesson) dates.push(d.lesson.date);
+  if (kind === "changed") { if (d.from) dates.push(d.from.date); if (d.to) dates.push(d.to.date); }
+  return dates;
+}
+
+function notifyAdmin(kind, d) {
+  const admin = props().getProperty("ADMIN_NOTIFY_EMAIL");
+  if (!admin) return;
+  const rv = d.reservation, settings = d.settings;
+  const mode = settings.notifyMode || "smart";
+  if (mode === "off") return;
+  const tomorrow = addDays(nowJST().date, 1);
+  const urgent = touchedDates(kind, d).some((x) => x <= tomorrow);
+  const what = kind === "cancelled" && d.lesson ? `取消：${formatDateJa(d.lesson.date)} ${d.lesson.time}`
+    : kind === "changed" && d.from ? `変更：${formatDateJa(d.from.date)} ${d.from.time} → ${formatDateJa(d.to.date)} ${d.to.time}`
+    : `予約：${rv.lessons.filter((l) => l.status === "active").map((l) => `${formatDateJa(l.date)} ${l.time}`).join("、")}`;
+  const line = `${rv.childName}（${rv.grade}・${rv.planName}）${what}`;
+  if (mode === "each" || (mode === "smart" && urgent)) {
+    MailApp.sendEmail({ to: admin, name: settings.schoolName,
+      subject: `${urgent ? "【急ぎ】" : ""}[予約${KIND_JA[kind]}] ${rv.childName}（${rv.grade}）`,
+      body: `${line}\n\n予約中の日時\n${lessonLines(rv)}\n保護者：${rv.parentName}\nメール：${rv.email}\n電話：${rv.phone}\nご要望：${rv.note}\n\n管理画面：${siteUrl()}/admin/` });
+  } else {
+    appendText("digest", [new Date().toISOString(), KIND_JA[kind], line, "0"]);
+  }
+}
+
+// 毎朝、たまった通知を1通にまとめて送る
+function sendDigest() {
+  const admin = props().getProperty("ADMIN_NOTIFY_EMAIL");
+  if (!admin) return;
+  const settings = store.getSettings();
+  const pending = rows("digest", ["at", "kind", "text", "sent"]).filter((r) => r.sent !== "1");
+  if (!pending.length) return;
+  const count = (k) => pending.filter((r) => r.kind === k).length;
+  const body = `前回のお知らせから ${pending.length} 件の動きがありました（新規 ${count("新規")}・変更 ${count("変更")}・キャンセル ${count("キャンセル")}）。\n\n`
+    + pending.map((r) => `・[${r.kind}] ${r.text}`).join("\n")
+    + `\n\n※当日・翌日のレッスンに関わるものは、その都度お知らせしています。\n管理画面：${siteUrl()}/admin/`;
+  MailApp.sendEmail({ to: admin, name: settings.schoolName, subject: `[予約まとめ] ${pending.length}件（${formatDateJa(nowJST().date)}）`, body });
+  const sh = sheet("digest");
+  pending.forEach((r) => sh.getRange(r._row, 4).setNumberFormat("@").setValue("1"));
+  forget("digest");
 }
 
 // ---------- 予約ページからの受付（公開URL） ----------
@@ -314,6 +374,7 @@ function api(json) {
 
 // ---------- 毎朝9時：前日のお知らせと、古い個人情報の削除 ----------
 function dailyJob() {
+  try { sendDigest(); } catch (e) { console.error("digest failed", e); }
   const settings = store.getSettings();
   const tomorrow = addDays(nowJST().date, 1);
   const res = {};

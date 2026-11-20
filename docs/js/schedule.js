@@ -45,6 +45,8 @@ export const DEFAULT_SETTINGS = {
   cancelHoursBefore: 24,       // 何時間前までキャンセル・変更できるか
   notice: "",                  // トップに出すお知らせ（空なら非表示）
   admins: [],                  // 管理画面に入れるGoogleアカウント（公開した本人は常に入れる）
+  // 教室への通知：smart＝当日・翌日分だけすぐ＋ほかは毎朝まとめ／each＝すべてすぐ／digest＝毎朝まとめだけ／off＝送らない
+  notifyMode: "smart",
 };
 
 export const pad = (n) => String(n).padStart(2, "0");
@@ -171,6 +173,7 @@ export function validateSettings(s) {
   if (!Array.isArray(s.plans) || !s.plans.length) return "コースが設定されていません";
   for (const p of s.plans) if (!p.id || !p.name || !(p.times >= 1 && p.times <= 8)) return "コースの設定が正しくありません";
   if (!(s.capacity >= 1 && s.capacity <= 50)) return "定員は1〜50人にしてください";
+  if (s.notifyMode && !["smart", "each", "digest", "off"].includes(s.notifyMode)) return "通知方法を選んでください";
   if (!Array.isArray(s.admins) || s.admins.length > 30 || s.admins.some((a) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a))) return "管理者のメールアドレスを確認してください";
   for (let i = 0; i < 7; i++) {
     const r = s.weekly?.[i];
