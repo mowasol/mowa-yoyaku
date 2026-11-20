@@ -8,6 +8,10 @@ const addMin = (t, m) => toHHMM(Math.min(toMin(t) + m, 23 * 60 + 55));
 import { html, React, motion, AnimatePresence, ease, tap, fadeUp, monthLabel, ErrorBox, Button } from "./ui.js";
 
 const { useState, useEffect, useCallback, useRef } = React;
+// 保存は押した順に1つずつ送る（素早く何度も押しても、最後に押した状態が保存される）
+let saveChain = Promise.resolve();
+const queued = (fn) => (saveChain = saveChain.then(fn, fn));
+
 const TABS = [["cal", "カレンダー"], ["list", "予約一覧"], ["days", "営業日"], ["settings", "設定"]];
 
 function App() {
@@ -26,11 +30,17 @@ function App() {
   const cache = useRef({});
   const monthRef = useRef(month);
   monthRef.current = month;
-  const fetchMonth = useCallback((m) => call("GET", `/api/admin/lessons?month=${m}`).then((d) => {
-    cache.current[m] = d;
-    if (monthRef.current === m) setData(d);
-    return d;
-  }), []);
+  // 画面で先に変えた内容より古い読み込み結果は捨てる（切り替えが戻って見えないように）
+  const editSeq = useRef(0);
+  const fetchMonth = useCallback((m) => {
+    const seq = editSeq.current;
+    return call("GET", `/api/admin/lessons?month=${m}`).then((d) => {
+      if (seq !== editSeq.current) return cache.current[m];
+      cache.current[m] = d;
+      if (monthRef.current === m) setData(d);
+      return d;
+    });
+  }, []);
   const load = useCallback(() => fetchMonth(month).catch((e) => setErr(e.message)), [month]);
   useEffect(() => {
     if (!settings) return;
@@ -40,7 +50,7 @@ function App() {
     }).catch((e) => setErr(e.message));
   }, [month, settings]);
   // 画面を先に変えてから裏で保存する（待たずに次の操作ができる）
-  const patch = useCallback((fn) => setData((d) => { const nd = fn(d); cache.current[nd.month] = nd; return nd; }), []);
+  const patch = useCallback((fn) => { editSeq.current += 1; setData((d) => { const nd = fn(d); cache.current[nd.month] = nd; return nd; }); }, []);
   const shown = data && data.month === month ? data : null;
 
   const nav = html`<div className="month-nav">
@@ -102,8 +112,7 @@ function Person({ l, reload, patch, setErr }) {
     if (!sure) return setSure(true);
     // すぐ「キャンセル済み」にして、裏で保存する
     patch((d) => ({ ...d, lessons: d.lessons.map((x) => (x.id === l.id && x.reservationId === l.reservationId ? { ...x, status: "cancelled" } : x)) }));
-    try { await call("POST", `/api/admin/lessons/${l.id}/cancel`); } catch (e) { setErr(e.message); }
-    reload();
+    try { await queued(() => call("POST", `/api/admin/lessons/${l.id}/cancel`)); } catch (e) { setErr(e.message); reload(); }
   };
   return html`<div className=${`person ${l.status === "cancelled" ? "cancelled" : ""}`}>
     <span className="nm">${l.childName}</span><span className="gr">${l.grade}</span><span className="pl">${l.plan}</span>
@@ -189,13 +198,13 @@ function DaysTab({ data, settings, nav, reload, patch, setErr }) {
   const save = async (open) => {
     const capacity = dcap === "" ? "" : Number(dcap);
     applyLocal(edit, { open, note, capacity });
-    try { await call("PUT", `/api/admin/overrides/${edit}`, { open, note, capacity }); } catch (e) { setErr(e.message); }
-    reload();
+    const date = edit;
+    try { await queued(() => call("PUT", `/api/admin/overrides/${date}`, { open, note, capacity })); } catch (e) { setErr(e.message); reload(); }
   };
   const reset = async () => {
     applyLocal(edit, null);
-    try { await call("DELETE", `/api/admin/overrides/${edit}`); } catch (e) { setErr(e.message); }
-    reload();
+    const date = edit;
+    try { await queued(() => call("DELETE", `/api/admin/overrides/${date}`)); } catch (e) { setErr(e.message); reload(); }
   };
   return html`<section>
     <div className="toolbar">${nav}</div>
