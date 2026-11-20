@@ -46,7 +46,7 @@ python -m http.server 8767 --directory docs
 2. 拡張機能 → Apps Script を開き、`gas/` の4ファイルを同じ名前で作って中身を貼る
    - `Code.gs`、`Shared.gs`、`Admin.html`、`appsscript.json`（プロジェクトの設定で「appsscript.json をエディタで表示」をオン）
 3. プロジェクトの設定 → スクリプト プロパティに追加
-   - `SITE_URL`：予約ページのURL（最初は `https://mowasol.github.io/mowa-yoyaku`、ドメイン設定後は `https://yoyaku.mowasol.com`）
+   - `SITE_URL`：予約ページのURL（現在 `https://yoyaku.mowasol.com`）
    - `CALENDAR_ID`：予定を入れるGoogleカレンダーのID（カレンダーの設定 → カレンダーの統合）
    - `ADMIN_NOTIFY_EMAIL`：新規予約の通知先（`school@mowasol.com`）
    - `REPLY_TO`：保護者の返信先（空なら `school@mowasol.com`）
@@ -62,7 +62,7 @@ python -m http.server 8767 --directory docs
 ### 3. GitHub Pages
 1. GitHub のリポジトリ → Settings → Pages → Branch：`main`、フォルダ：`/docs` → Save
 2. 無料プランでは、リポジトリを Public にする必要がある（コードに個人情報や鍵は入っていない。予約データはスプレッドシート側）
-3. 独自ドメイン：Pages の Custom domain に `yoyaku.mowasol.com` を入れ、mowasol.com のDNSに CNAME（`yoyaku` → `mowasol.github.io`）を1行追加。「Enforce HTTPS」をオン
+3. 独自ドメイン：Pages の Custom domain に `yoyaku.mowasol.com` を入れ、mowasol.com のDNS（GoDaddy）に CNAME（`yoyaku` → `mowasol.github.io`）を1行追加（設定済み）。「Enforce HTTPS」をオン
 
 ### 4. 仕上げ
 - `privacy.html` の制定日と内容を確認
