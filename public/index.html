@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>レッスン予約 | mowaプログラミング教室</title>
+<meta name="description" content="mowaプログラミング教室のレッスン予約ページです。月1回・月2回コースの日時をWebで予約できます。">
+<link rel="icon" href="/assets/mowa-neko.jpg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700&family=Noto+Sans+JP:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="demo-bar" id="demoBar" hidden>お試しモード：この予約は保存されません（このブラウザの中だけで動いています）<button type="button" id="demoReset">見本に戻す</button></div>
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="/">
+      <span class="brand-logo"><img src="/assets/mowa-neko.jpg" alt="mowaねこ" width="50" height="35"></span>
+      <span class="brand-name"><span id="schoolName">mowaプログラミング教室</span><small>レッスン予約</small></span>
+    </a>
+    <a class="head-link" href="/reservation.html">予約の確認・変更</a>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="intro">
+    <h1>レッスンの日時を<span class="mark">えらんで予約</span></h1>
+    <p>コースは月1回と月2回の2つです。レッスンの内容は、お子さま一人ひとりに合わせて決めます。</p>
+    <dl class="hours" id="hours"></dl>
+    <div class="notice" id="notice" hidden></div>
+  </section>
+
+  <ol class="steps" id="steps">
+    <li data-n="1">コース</li>
+    <li data-n="2">日時</li>
+    <li data-n="3">お子さま</li>
+    <li data-n="4">確認</li>
+  </ol>
+
+  <!-- 1 コース -->
+  <section class="panel" id="step1">
+    <h2>コースをえらぶ</h2>
+    <p class="lead">ひと月に何回通うかを選んでください。</p>
+    <div class="plans" id="plans"></div>
+    <div class="actions"><span></span><button class="btn" type="button" id="to2" disabled>日時をえらぶ</button></div>
+  </section>
+
+  <!-- 2 日時 -->
+  <section class="panel" id="step2" hidden>
+    <h2>日時をえらぶ</h2>
+    <p class="lead" id="step2lead"></p>
+    <div class="cal-head">
+      <button class="icon-btn" type="button" id="prevM" aria-label="前の月">‹</button>
+      <h3 id="monthLabel"></h3>
+      <button class="icon-btn" type="button" id="nextM" aria-label="次の月">›</button>
+    </div>
+    <div class="cal" id="cal" aria-label="カレンダー"><p class="loading">空き状況を読み込んでいます…</p></div>
+    <div class="legend"><span><b class="ok">○</b> 空きあり</span><span><b class="few">△</b> 残りわずか</span><span><b class="full">×</b> 満席</span><span>休 お休み</span></div>
+    <div class="times-box" id="timesBox" hidden>
+      <h4 id="timesTitle"></h4>
+      <div class="slots" id="slots"></div>
+    </div>
+    <div class="tray">
+      <div class="tray-title"><span>えらんだ日時</span><span id="trayCount"></span></div>
+      <ul id="tray"></ul>
+      <p class="empty" id="trayEmpty">カレンダーの日付をタップして、時間をえらんでください。</p>
+    </div>
+    <div class="err" id="err2" hidden></div>
+    <div class="actions">
+      <button class="btn ghost" type="button" data-back="1">戻る</button>
+      <button class="btn" type="button" id="to3" disabled>次へ</button>
+    </div>
+  </section>
+
+  <!-- 3 お子さま情報 -->
+  <section class="panel" id="step3" hidden>
+    <h2>お子さまと保護者の情報</h2>
+    <p class="lead">予約の確認メールをお送りします。</p>
+    <div class="reuse" id="reuse" hidden><span>前回の入力内容があります。</span><button class="btn ghost small" type="button" id="reuseBtn">前回の内容を使う</button></div>
+    <form class="form" id="infoForm" novalidate>
+      <div class="row2">
+        <div class="field"><label for="childName">お子さまのお名前<span class="req">必須</span></label><input id="childName" name="childName" autocomplete="off" maxlength="40" placeholder="例：もわ たろう" required></div>
+        <div class="field"><label for="grade">学年<span class="req">必須</span></label><select id="grade" name="grade" required><option value="">選んでください</option></select></div>
+      </div>
+      <div class="field"><label for="parentName">保護者のお名前<span class="req">必須</span></label><input id="parentName" name="parentName" autocomplete="name" maxlength="40" placeholder="例：もわ はなこ" required></div>
+      <div class="row2">
+        <div class="field"><label for="email">メールアドレス<span class="req">必須</span></label><input id="email" name="email" type="email" autocomplete="email" inputmode="email" maxlength="120" placeholder="例：mowa@example.jp" required><span class="hint">予約の確認・変更用のリンクが届きます</span></div>
+        <div class="field"><label for="phone">電話番号<span class="opt">任意</span></label><input id="phone" name="phone" type="tel" autocomplete="tel" inputmode="tel" maxlength="20" placeholder="例：090-1234-5678"><span class="hint">当日の急な連絡用</span></div>
+      </div>
+      <div class="field"><label for="note">ご要望・やってみたいこと<span class="opt">任意</span></label><textarea id="note" name="note" maxlength="500" placeholder="例：ゲームを作ってみたい／前回の続きから"></textarea></div>
+      <label class="check"><input type="checkbox" id="remember" checked><span>次回のために、この端末に入力内容を保存する</span></label>
+    </form>
+    <div class="err" id="err3" hidden></div>
+    <div class="actions">
+      <button class="btn ghost" type="button" data-back="2">戻る</button>
+      <button class="btn" type="button" id="to4">確認へ</button>
+    </div>
+  </section>
+
+  <!-- 4 確認 -->
+  <section class="panel" id="step4" hidden>
+    <h2>内容の確認</h2>
+    <p class="lead">この内容で予約します。</p>
+    <dl class="summary" id="summary"></dl>
+    <label class="check" id="agreeRow"><input type="checkbox" id="agree"><span><a href="/privacy.html" target="_blank" rel="noopener">個人情報の取り扱い</a>に同意します</span></label>
+    <div class="turnstile-box" id="turnstile"></div>
+    <div class="err" id="err4" hidden></div>
+    <div class="actions">
+      <button class="btn ghost" type="button" data-back="3">戻る</button>
+      <button class="btn" type="button" id="submit" disabled>予約する</button>
+    </div>
+  </section>
+
+  <!-- 完了 -->
+  <section class="panel done" id="stepDone" hidden>
+    <span class="cat-wrap"><img class="cat-big" src="/assets/mowa-neko.jpg" alt=""></span>
+    <h2>予約できました</h2>
+    <p id="doneText"></p>
+    <ul class="lesson-list" id="doneLessons"></ul>
+    <p class="lead">確認・変更・キャンセルは、メールのリンクか下のリンクからできます。</p>
+    <div class="linkbox"><input id="doneLink" readonly aria-label="予約の確認リンク"><button class="btn small" type="button" id="copyLink">コピー</button></div>
+    <div class="actions"><a class="btn ghost" href="/">トップに戻る</a><a class="btn" id="doneManage" href="/reservation.html">予約を確認する</a></div>
+  </section>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap"><span>© mowaソリューションズ株式会社</span><a href="/privacy.html">個人情報の取り扱い</a></div>
+</footer>
+<script type="module" src="/js/book.js"></script>
+</body>
+</html>

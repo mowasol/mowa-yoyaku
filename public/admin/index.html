@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>予約管理 | mowaプログラミング教室</title>
+<link rel="icon" href="/assets/mowa-neko.jpg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700&family=Noto+Sans+JP:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="/css/style.css">
+<link rel="stylesheet" href="/css/admin.css">
+</head>
+<body class="admin">
+<div class="demo-bar" id="demoBar" hidden>お試しモード：見本のデータです。変更はこのブラウザの中だけに保存されます</div>
+<header class="site-head">
+  <div class="wrap wide">
+    <a class="brand" href="/admin/">
+      <span class="brand-logo"><img src="/assets/mowa-neko.jpg" alt="mowaねこ" width="50" height="35"></span>
+      <span class="brand-name">予約管理<small id="who">mowaプログラミング教室</small></span>
+    </a>
+    <nav class="tabs" role="tablist">
+      <button type="button" role="tab" data-tab="list" aria-selected="true">予約一覧</button>
+      <button type="button" role="tab" data-tab="days" aria-selected="false">営業日</button>
+      <button type="button" role="tab" data-tab="settings" aria-selected="false">設定</button>
+      <a class="tab-link" href="/" target="_blank" rel="noopener">予約ページ ↗</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap wide">
+  <div class="err" id="fatal" hidden></div>
+
+  <!-- 予約一覧 -->
+  <section id="tab-list">
+    <div class="toolbar">
+      <div class="month-nav"><button class="icon-btn" type="button" data-m="-1" aria-label="前の月">‹</button><h2 class="m-label"></h2><button class="icon-btn" type="button" data-m="1" aria-label="次の月">›</button></div>
+      <div class="tool-right">
+        <label class="mini-check"><input type="checkbox" id="showCancelled"> キャンセルも表示</label>
+        <button class="btn ghost small" type="button" id="csv">CSVで書き出す</button>
+      </div>
+    </div>
+    <div class="stats" id="stats"></div>
+    <div id="dayList"><p class="loading">読み込んでいます…</p></div>
+  </section>
+
+  <!-- 営業日 -->
+  <section id="tab-days" hidden>
+    <div class="toolbar">
+      <div class="month-nav"><button class="icon-btn" type="button" data-m="-1" aria-label="前の月">‹</button><h2 class="m-label"></h2><button class="icon-btn" type="button" data-m="1" aria-label="次の月">›</button></div>
+    </div>
+    <p class="lead">日付を押すと、その日だけ「お休み」にしたり「営業」にしたりできます。第5週の自動休みを別の日に振り替えるときも、ここで切り替えてください。</p>
+    <div class="cal admin-cal" id="dayCal"></div>
+    <div class="legend"><span><b class="ok">営業</b> 通常どおり</span><span><b class="full">休</b> お休み</span><span>★ 個別に変更した日</span></div>
+    <div class="panel day-edit" id="dayEdit" hidden>
+      <h3 id="deTitle"></h3>
+      <p class="lead" id="deState"></p>
+      <div class="field"><label for="deNote">お知らせメモ（予約ページに表示）</label><input id="deNote" maxlength="40" placeholder="例：臨時休業／振替営業"></div>
+      <div class="actions">
+        <button class="btn ghost small" type="button" id="deReset">通常に戻す</button>
+        <span class="btn-row"><button class="btn danger small" type="button" id="deClose">お休みにする</button><button class="btn small" type="button" id="deOpen">営業にする</button></span>
+      </div>
+      <p class="lead" id="deWarn"></p>
+    </div>
+  </section>
+
+  <!-- 設定 -->
+  <section id="tab-settings" hidden>
+    <form class="panel form" id="settingsForm" novalidate>
+      <h2>営業時間</h2>
+      <p class="lead">レッスンのコマは、開始時刻から「1コマの長さ」ごとに自動で作られます。休憩時間にかかるコマは作られません。</p>
+      <div class="tbl-wrap"><table class="week-tbl" id="weekTbl"></table></div>
+      <div class="row3">
+        <div class="field"><label for="lessonMinutes">1コマの長さ（分）</label><input id="lessonMinutes" type="number" min="15" max="240" step="5"></div>
+        <div class="field"><label for="capacity">1コマの定員（人）</label><input id="capacity" type="number" min="1" max="50"></div>
+        <div class="field"><label for="maxPer">同じ曜日は月に何回まで</label><select id="maxPer"><option value="4">4回（第5週はお休み）</option><option value="0">制限なし</option></select></div>
+      </div>
+      <h2>予約の受付</h2>
+      <div class="row3">
+        <div class="field"><label for="openDays">何日先まで予約できるか</label><input id="openDays" type="number" min="7" max="180"></div>
+        <div class="field"><label for="closeHours">何時間前で締め切るか</label><input id="closeHours" type="number" min="0" max="168"></div>
+        <div class="field"><label for="cancelHours">変更・キャンセルの期限（時間前）</label><input id="cancelHours" type="number" min="0" max="168"></div>
+      </div>
+      <h2>コースと表示</h2>
+      <div class="row3" id="planFields"></div>
+      <div class="field"><label for="schoolNameIn">教室名</label><input id="schoolNameIn" maxlength="40"></div>
+      <div class="field"><label for="noticeIn">お知らせ（予約ページの上に表示。空なら非表示）</label><textarea id="noticeIn" maxlength="300" placeholder="例：12月29日〜1月3日は冬休みです"></textarea></div>
+      <div class="err" id="setErr" hidden></div>
+      <div class="actions"><span class="saved" id="saved" hidden>保存しました</span><button class="btn" type="submit">設定を保存</button></div>
+    </form>
+  </section>
+</main>
+<script type="module" src="/js/admin.js"></script>
+</body>
+</html>

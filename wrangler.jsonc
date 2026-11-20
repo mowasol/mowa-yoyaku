@@ -1,0 +1,32 @@
+{
+  // mowaプログラミング 予約サイト（Cloudflare Workers）
+  "name": "mowa-yoyaku",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "mowa-yoyaku",
+      "database_id": "ここにD1のIDを貼る"
+    }
+  ],
+  // 毎日 0:00 UTC = 日本時間 9:00（前日リマインドと古い個人情報の削除）
+  "triggers": { "crons": ["0 0 * * *"] },
+  "vars": {
+    "SITE_URL": "https://yoyaku.example.jp",
+    "ACCESS_TEAM_DOMAIN": "mowa.cloudflareaccess.com",
+    "ACCESS_AUD": "ここにAccessアプリのAUDを貼る",
+    "ADMIN_EMAILS": "",
+    "MAIL_FROM": "mowaプログラミング教室 <yoyaku@example.jp>",
+    "ADMIN_NOTIFY_EMAIL": "",
+    "TURNSTILE_SITE_KEY": "",
+    "RETENTION_DAYS": "365"
+  }
+  // 秘密の値はダッシュボードの「Secrets」に入れる（ここには書かない）
+  //   TURNSTILE_SECRET / RESEND_API_KEY
+}
