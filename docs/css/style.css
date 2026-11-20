@@ -258,3 +258,4 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .toast { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); translate: -50% 0; background: var(--ink); color: var(--paper); padding: 10px 20px; border-radius: 999px; font-weight: 700; z-index: 30; box-shadow: var(--clay); }
 .scrim { position: fixed; inset: 0; background: rgba(20, 25, 19, .5); display: grid; place-items: center; padding: 16px; z-index: 20; }
 .dialog { width: min(440px, 100%); margin: 0; }
+.steps li.on::before, .steps li.done::before { content: none; display: none; }
