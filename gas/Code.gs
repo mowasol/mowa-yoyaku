@@ -113,7 +113,8 @@ function withLock(fn) {
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
   MEMO = {}; // ロック中は必ず最新を読む
-  try { return fn(); } finally { lock.releaseLock(); }
+  // 書き込みを確定させてからロックを外す（外したあとに次の人が古い内容を読まないように）
+  try { return fn(); } finally { SpreadsheetApp.flush(); lock.releaseLock(); }
 }
 const full = () => new ApiError(409, "タッチの差で満席になったコマがあります。別の日時を選び直してください", "full");
 
@@ -196,7 +197,9 @@ const store = {
     }).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time) || a.id - b.id);
   },
   adminCancelLesson(id) {
-    const l = lessonRows().find((x) => x.id === id);
+    // 万一同じ番号が重なっていても、予約中のものを優先して取り消す
+    const all = lessonRows();
+    const l = all.find((x) => x.id === id && x.status === "active") || all.find((x) => x.id === id);
     if (l) { setCell("lessons", l._row, 5, "cancelled"); calendarSyncReservation(l.reservation_id); }
   },
 };
