@@ -3,3 +3,5 @@ node_modules/
 .dev.vars
 *.log
 gas/dist/
+docs/_test.html
+docs/js/_test*.js
